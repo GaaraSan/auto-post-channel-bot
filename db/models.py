@@ -34,6 +34,10 @@ class Anime(Base):
 
     image_url = Column(String)
 
+    # дополнительные поля (добавлены для фильтрации качества)
+    kind = Column(String, nullable=True)     # tv, movie, ova, ona, special, music, cm, pv
+    members = Column(Integer, nullable=True) # число людей, добавивших аниме на Shikimori
+
     # связь с жанрами
     genres = relationship(
         "Genre",
