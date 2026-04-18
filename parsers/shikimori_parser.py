@@ -16,16 +16,20 @@ def parse_shikimori_anime(anime_id: int) -> dict:
 
     data = response.json()
 
+    stats = data.get("rates_statuses_stats") or []
+
     return {
         "shikimori_id": data["id"],
         "name": data["name"],
         "russian": data["russian"],
         "description": data["description"],
         "status": data["status"],
+        "kind": data.get("kind"),
         "episodes": data["episodes"],
         "episodes_aired": data["episodes_aired"],
         "year": data["aired_on"][:4] if data["aired_on"] else None,
         "rating": data["score"],
+        "members": sum(e.get("value", 0) for e in stats) if stats else None,
         "image": f"https://shikimori.one{data['image']['original']}" if data.get("image") else None,
         "genres": [g["name"] for g in data["genres"]],
     }

@@ -79,10 +79,12 @@ def build_anime_object(data, session):
         title_original=data.get('name'),
         description=data.get('description'),
         status=data.get('status'),
+        kind=data.get('kind'),
         episodes=data.get('episodes'),
         episodes_aired=data.get('episodes_aired'),
         year=safe_int(data.get('year')),
         rating=safe_float(data.get('rating')),
+        members=data.get('members'),
         image_url=data.get('image')
     )
 
