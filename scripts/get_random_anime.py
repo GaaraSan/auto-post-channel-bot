@@ -4,6 +4,7 @@ import logging
 import sys
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from db.database import SessionLocal
@@ -42,10 +43,12 @@ MIN_MEMBERS    = 500                      # минимально популяр�
 MIN_RATING     = 3.0                      # очевидный хлам
 MIN_DESC_LEN   = 120                      # мин. длина описания
 
-# SQL LIMIT: сколько записей подтягиваем в Python для скоринга
-CANDIDATE_POOL = 500
+# Топ-N по members (популярные, но преимущественно старые)
+POOL_TOP    = 300
+# Случайные N (шанс для новых и менее популярных)
+POOL_RANDOM = 200
 # TOP-N перед random.choice
-TOP_N          = 50
+TOP_N       = 50
 
 # ---------------------------------------------------------------------------
 # Скоринг (Python-сторона, чтобы не зависеть от log10 в SQLite)
@@ -54,18 +57,29 @@ TOP_N          = 50
 def calculate_weight(anime) -> float:
     """
     Гибридный вес для случайной сортировки.
-    Основа: rating + популярность (members) + бонус за новизну/статус.
+    Основа: rating + популярность (members) + ступенчатый бонус за новизну.
     """
     current_year = datetime.now(UTC).year
 
     # База: rating (если NULL — нейтральное 5.5) + log10(members)
+    # Коэффициент 2.0 (был 3.0) — ослабляем доминирование старых тайтлов с большой аудиторией
     rating_part  = (anime.rating or 5.5) * 2.0
-    members_part = math.log10((anime.members or 1) + 1) * 3.0
+    members_part = math.log10((anime.members or 1) + 1) * 2.0
     score = rating_part + members_part
 
-    # Бонус: новинка последних двух лет
-    if anime.year and anime.year >= current_year - 1:
-        score += 3.0
+    # Ступенчатый бонус за год выпуска
+    # Чем новее — тем выше бонус; старые получают штраф
+    if anime.year:
+        if anime.year >= current_year - 1:    # последние 1-2 года
+            score += 5.0
+        elif anime.year >= current_year - 3:  # последние 3 года
+            score += 3.0
+        elif anime.year >= current_year - 7:  # последние 7 лет
+            score += 1.5
+        elif anime.year >= current_year - 15: # последние 15 лет
+            score += 0.0
+        else:                                 # старше 15 лет
+            score -= 1.0
 
     # Бонус: сериальный (хотя бы 12 серий)
     if anime.episodes and anime.episodes >= 12:
@@ -83,6 +97,7 @@ def calculate_weight(anime) -> float:
 
     return max(score, 0.1)  # всегда положительный
 
+
 def get_random_anime():
     session = SessionLocal()
 
@@ -90,45 +105,65 @@ def get_random_anime():
         global LAST_SELECT_ERROR
         LAST_SELECT_ERROR = None
 
-        # ШТАП 1: статистика предыдущих пуБликаций (для self-correction)
+        # ШАГ 1: статистика предыдущих публикаций (для self-correction)
         stats    = get_publication_stats(session, WINDOW_SIZE)
         penalties = get_penalty_multipliers(stats)
 
-        # ШТАП 2: SQL-фильтрация — только качественный пул pool (без N+1)
-        # ————————————————————————————————————————————————————————————————————————
-        # Один SQL-запрос, нет N+1, нет .all() на всю таблицу
+        # ШАГ 2: SQL-фильтрация — два пула (топ + случайные), нет N+1
 
-        # Retry: если eligible пустой — расширяем пул вдвое (без дублирования кода)
-        eligible = []
-        for pool_limit in (CANDIDATE_POOL, CANDIDATE_POOL * 2):
-            candidates = (
+        # Фильтры качества вынесены из цикла: не зависят от multiplier
+        quality_filters = (
+            Anime.members.isnot(None),
+            Anime.members >= MIN_MEMBERS,
+            Anime.image_url.isnot(None),
+            Anime.description.isnot(None),
+            Anime.genres.any(),          # хоть один жанр (без JOIN)
+            # rating IS NULL — OK (новинки), только очевидный хлам выкидываем
+            ~(
+                Anime.rating.isnot(None)
+                & (Anime.rating < MIN_RATING)
+            ),
+            ~Anime.kind.in_(list(EXCLUDED_KINDS)),
+        )
+
+        def _base_query():
+            return (
                 session.query(Anime)
                 .options(joinedload(Anime.genres))
-                .filter(
-                    # ФИЛЬТРАЦИЯ КАЧЕСТВА — убираем мусор
-                    Anime.members.isnot(None),
-                    Anime.members >= MIN_MEMBERS,
-                    Anime.image_url.isnot(None),
-                    Anime.description.isnot(None),
-                    Anime.genres.any(),             # хоть один жанр (без JOIN)
-                    # rating IS NULL — OK (новинки), только очевидный хлам выкидываем
-                    ~(
-                        Anime.rating.isnot(None)
-                        & (Anime.rating < MIN_RATING)
-                    ),
-                    # исключаем рекламу/клипы
-                    ~Anime.kind.in_(list(EXCLUDED_KINDS)),
-                )
+                .filter(*quality_filters)
+            )
+
+        # Retry: если eligible пустой — расширяем оба пула вдвое
+        eligible = []
+        for multiplier in (1, 2):
+            # Часть 1: популярные (топ по members) — стабильное качество
+            top_candidates = (
+                _base_query()
                 .order_by(Anime.members.desc(), Anime.rating.desc())
-                .limit(pool_limit)
+                .limit(POOL_TOP * multiplier)
                 .all()
             )
 
+            # Часть 2: случайные — шанс для новинок и менее популярных
+            random_candidates = (
+                _base_query()
+                .order_by(func.random())
+                .limit(POOL_RANDOM * multiplier)
+                .all()
+            )
+
+            # Объединяем, удаляем дубликаты по id (dict сохраняет порядок вставки)
+            seen: dict = {}
+            for a in top_candidates + random_candidates:
+                if a.id not in seen:
+                    seen[a.id] = a
+            candidates = list(seen.values())
+
             if not candidates:
-                logger.debug("Нет кандидатов после SQL-фильтрации (pool=%d)", pool_limit)
+                logger.debug("Нет кандидатов после SQL-фильтрации (multiplier=%d)", multiplier)
                 break
 
-            # ШТАП 3: Python-скоринг (нет N+1, всё уже в памяти)
+            # ШАГ 3: Python-скоринг (нет N+1, всё уже в памяти)
             candidate_ids = [a.id for a in candidates]
             last_pubs = (
                 session.query(PublishedAnime)
@@ -153,8 +188,8 @@ def get_random_anime():
             if eligible:
                 break
             logger.warning(
-                "Нет аниме после cooldown/description (pool=%d) — расширяю пул...",
-                pool_limit,
+                "Нет аниме после cooldown/description (multiplier=%d) — расширяю пул...",
+                multiplier,
             )
 
         if not eligible:
