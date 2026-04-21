@@ -4,7 +4,6 @@ import logging
 import sys
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import exists
 from sqlalchemy.orm import joinedload
 
 from db.database import SessionLocal
@@ -95,18 +94,6 @@ def get_random_anime():
         # ШТАП 2: SQL-фильтрация — только качественный пул pool (без N+1)
         # ————————————————————————————————————————————————————————————————————————
         # Один SQL-запрос, нет N+1, нет .all() на всю таблицу
-
-        # Подзапрос для вылючения: аниме, у которого есть ХОТЬ ОДНА запись в published_anime
-        recently_published_ids = {
-            row[0]
-            for row in session.query(PublishedAnime.anime_id).all()
-        }
-
-        now = datetime.now(UTC)
-        cooldown_cutoffs = {
-            status: now - timedelta(days=days)
-            for status, days in COOLDOWN_DAYS.items()
-        }
 
         candidates = (
             session.query(Anime)
