@@ -30,6 +30,9 @@ COOLDOWN_DAYS = {
     "anons": 30,
 }
 
+# Минимальный cooldown для ongoing, даже если вышли новые серии
+ONGOING_MIN_COOLDOWN_DAYS = 2
+
 # ---------------------------------------------------------------------------
 # Конфигурация фильтра качества (убрать мусор)
 # ---------------------------------------------------------------------------
@@ -40,7 +43,7 @@ MIN_RATING     = 3.0                      # очевидный хлам
 MIN_DESC_LEN   = 120                      # мин. длина описания
 
 # SQL LIMIT: сколько записей подтягиваем в Python для скоринга
-CANDIDATE_POOL = 200
+CANDIDATE_POOL = 500
 # TOP-N перед random.choice
 TOP_N          = 50
 
@@ -95,63 +98,67 @@ def get_random_anime():
         # ————————————————————————————————————————————————————————————————————————
         # Один SQL-запрос, нет N+1, нет .all() на всю таблицу
 
-        candidates = (
-            session.query(Anime)
-            .options(joinedload(Anime.genres))
-            .filter(
-                # ФИЛЬТРАЦИЯ КАЧЕСТВА — убираем мусор
-                Anime.members.isnot(None),
-                Anime.members >= MIN_MEMBERS,
-                Anime.image_url.isnot(None),
-                Anime.description.isnot(None),
-                Anime.genres.any(),             # хоть один жанр (без JOIN)
-                # rating IS NULL — OK (новинки), только очевидный хлам выкидываем
-                ~(
-                    Anime.rating.isnot(None)
-                    & (Anime.rating < MIN_RATING)
-                ),
-                # исключаем рекламу/клипы
-                ~Anime.kind.in_(list(EXCLUDED_KINDS)),
+        # Retry: если eligible пустой — расширяем пул вдвое (без дублирования кода)
+        eligible = []
+        for pool_limit in (CANDIDATE_POOL, CANDIDATE_POOL * 2):
+            candidates = (
+                session.query(Anime)
+                .options(joinedload(Anime.genres))
+                .filter(
+                    # ФИЛЬТРАЦИЯ КАЧЕСТВА — убираем мусор
+                    Anime.members.isnot(None),
+                    Anime.members >= MIN_MEMBERS,
+                    Anime.image_url.isnot(None),
+                    Anime.description.isnot(None),
+                    Anime.genres.any(),             # хоть один жанр (без JOIN)
+                    # rating IS NULL — OK (новинки), только очевидный хлам выкидываем
+                    ~(
+                        Anime.rating.isnot(None)
+                        & (Anime.rating < MIN_RATING)
+                    ),
+                    # исключаем рекламу/клипы
+                    ~Anime.kind.in_(list(EXCLUDED_KINDS)),
+                )
+                .order_by(Anime.members.desc(), Anime.rating.desc())
+                .limit(pool_limit)
+                .all()
             )
-            # Грубая предсортировка в SQL — чтобы в LIMIT попал LIMITи хороших
-            .order_by(Anime.members.desc(), Anime.rating.desc())
-            .limit(CANDIDATE_POOL)
-            .all()
-        )
 
-        if not candidates:
-            logger.debug("Нет кандидатов после SQL-фильтрации")
-            return None
+            if not candidates:
+                logger.debug("Нет кандидатов после SQL-фильтрации (pool=%d)", pool_limit)
+                break
 
-        # ШТАП 3: Python-скоринг (нет N+1, всё уже в памяти)
-        # ————————————————————————————————————————————————————————————————————————
-        # Совмещаем scoring + cooldown + penalty без допалнительных запросов к БД
-
-        # Собираем последнюю публикацию для кандидатов за ОДНИМ запросом
-        candidate_ids = [a.id for a in candidates]
-        last_pubs = (
-            session.query(PublishedAnime)
-            .filter(PublishedAnime.anime_id.in_(candidate_ids))
-            .order_by(PublishedAnime.published_at.desc())
-            .all()
-        )
-        # last_pub_map: anime_id -> последняя запись PublishedAnime
-        last_pub_map: dict = {}
-        for pub in last_pubs:
-            if pub.anime_id not in last_pub_map:
-                last_pub_map[pub.anime_id] = pub
-
-        # Фильтруем cooldown + фильтр по description в Python
-        eligible = [
-            a for a in candidates
-            if (
-                len(a.description or "") >= MIN_DESC_LEN
-                and can_publish(a, last_pub_map.get(a.id))
+            # ШТАП 3: Python-скоринг (нет N+1, всё уже в памяти)
+            candidate_ids = [a.id for a in candidates]
+            last_pubs = (
+                session.query(PublishedAnime)
+                .filter(PublishedAnime.anime_id.in_(candidate_ids))
+                .order_by(PublishedAnime.published_at.desc())
+                .all()
             )
-        ]
+            # last_pub_map: anime_id -> последняя запись PublishedAnime
+            last_pub_map: dict = {}
+            for pub in last_pubs:
+                if pub.anime_id not in last_pub_map:
+                    last_pub_map[pub.anime_id] = pub
+
+            eligible = [
+                a for a in candidates
+                if (
+                    len(a.description or "") >= MIN_DESC_LEN
+                    and can_publish(a, last_pub_map.get(a.id))
+                )
+            ]
+
+            if eligible:
+                break
+            logger.warning(
+                "Нет аниме после cooldown/description (pool=%d) — расширяю пул...",
+                pool_limit,
+            )
 
         if not eligible:
-            logger.debug("Нет аниме после фильтра cooldown/description")
+            logger.warning("Нет аниме после фильтра cooldown/description даже с расширенным пулом")
             return None
 
         # Скоринг: calculate_weight + penalty из priority_weights
@@ -192,24 +199,24 @@ def can_publish(anime, last_pub) -> bool:
 
     now = datetime.now(UTC)
 
-    # 1️⃣ если ongoing и вышли новые серии
+    # Нормализуем datetime: SQLite часто возвращает naive — считаем его UTC
+    last_dt = last_pub.published_at
+    if getattr(last_dt, "tzinfo", None) is None:
+        last_dt = last_dt.replace(tzinfo=UTC)
+
+    # 1️⃣ если ongoing и вышли новые серии — с минимальным cooldown
     if anime.status == "ongoing":
         if (
             anime.episodes_aired
             and last_pub.episodes
             and anime.episodes_aired > last_pub.episodes
         ):
-            return True
+            # Новые серии есть, но всё равно ждём ONGOING_MIN_COOLDOWN_DAYS
+            return now >= last_dt + timedelta(days=ONGOING_MIN_COOLDOWN_DAYS)
 
     # 2️⃣ cooldown по статусу
     cooldown_days = COOLDOWN_DAYS.get(anime.status, 60)
-    last_dt = last_pub.published_at
-    # SQLite/SQLAlchemy часто возвращает naive datetime; считаем его UTC для совместимости
-    if getattr(last_dt, "tzinfo", None) is None:
-        last_dt = last_dt.replace(tzinfo=UTC)
-    cooldown_until = last_dt + timedelta(days=cooldown_days)
-
-    return now >= cooldown_until
+    return now >= last_dt + timedelta(days=cooldown_days)
 
 
 if __name__ == "__main__":
