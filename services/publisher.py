@@ -2,6 +2,8 @@
 import logging
 from datetime import UTC, datetime
 
+from telegram.error import NetworkError
+
 from db.database import SessionLocal
 from db.models import PublishedAnime
 from bot.formatter import format_anime_post
@@ -46,6 +48,11 @@ def publish_anime(anime, *, dry_run: bool = False) -> None:
 
         logger.info("Публикация завершена: %s", title)
 
+    except NetworkError as e:
+        # Сетевые ошибки Telegram (ДНС, таймаут) — краткий WARNING без traceback
+        session.rollback()
+        logger.warning("Сетевая ошибка Telegram при публикации: %s", e)
+        raise
     except Exception:
         session.rollback()
         logger.exception("Ошибка публикации аниме")

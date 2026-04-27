@@ -4,6 +4,7 @@ import random
 
 from app.runtime_state import STATE
 from services.post_cycle import run_post_cycle
+from telegram.error import NetworkError
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,10 @@ async def auto_poster_loop() -> None:
             interval = random.randint(min_s, max_s)
             logger.info("AUTO next interval: %ss", interval)
             await asyncio.sleep(interval)
+        except NetworkError as e:
+            # Сетевые ошибки Telegram (ДНС, таймаут) — краткий WARNING без traceback
+            logger.warning("Сетевая ошибка при автопостинге, продолжаю работу: %s", e)
+            await asyncio.sleep(5)
         except Exception:
             logger.exception("Ошибка в AUTO loop; продолжаю работу")
             await asyncio.sleep(5)
