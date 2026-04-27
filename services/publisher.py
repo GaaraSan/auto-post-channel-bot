@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from db.database import SessionLocal
 from db.models import PublishedAnime
 from bot.formatter import format_anime_post
-from bot.telegram_sender import send_post
+from bot.telegram_sender import send_post_with_cache
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ def publish_anime(anime, *, dry_run: bool = False) -> None:
 
     Делает:
     - формирование текста поста;
-    - отправку в Telegram (если dry_run=False);
+    - отправку в Telegram с кэшированием фото через file_id (если dry_run=False);
     - запись факта публикации в PublishedAnime (если dry_run=False);
     - логирование ключевых шагов и ошибок.
     """
@@ -32,7 +32,8 @@ def publish_anime(anime, *, dry_run: bool = False) -> None:
             logger.debug("DRY RUN текст:\n%s", post_text)
             return
 
-        send_post(text=post_text, image_url=getattr(anime, "image_url", None))
+        # send_post_with_cache: скачивает фото → отправляет → сохраняет file_id в session (без commit)
+        send_post_with_cache(text=post_text, anime=anime, session=session)
 
         pub = PublishedAnime(
             anime_id=anime.id,
@@ -41,7 +42,7 @@ def publish_anime(anime, *, dry_run: bool = False) -> None:
             published_at=datetime.now(UTC),
         )
         session.add(pub)
-        session.commit()
+        session.commit()  # единый commit: tg_file_id + PublishedAnime
 
         logger.info("Публикация завершена: %s", title)
 

@@ -35,8 +35,11 @@ class Anime(Base):
     image_url = Column(String)
 
     # дополнительные поля (добавлены для фильтрации качества)
-    kind = Column(String, nullable=True)     # tv, movie, ova, ona, special, music, cm, pv
-    members = Column(Integer, nullable=True) # число людей, добавивших аниме на Shikimori
+    kind    = Column(String,  nullable=True)  # tv, movie, ova, ona, special, music, cm, pv
+    members = Column(Integer, nullable=True)  # число людей, добавивших аниме на Shikimori
+
+    # кэш Telegram file_id: при повторной отправке не нужно скачивать изображение
+    tg_file_id = Column(String, nullable=True)
 
     # связь с жанрами
     genres = relationship(
