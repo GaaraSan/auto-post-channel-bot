@@ -163,6 +163,70 @@ async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.effective_chat.send_message("Ошибка: не удалось установить интервал.")
 
 
+async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /post_anime <shikimori_id|название>
+    Публикует конкретное аниме по shikimori_id (число) или по названию (поиск по title_ru / title_en).
+    """
+    if not _is_admin(update):
+        await update.effective_chat.send_message("Нет доступа.")
+        return
+
+    if not context.args:
+        await update.effective_chat.send_message(
+            "Использование:\n"
+            "  /post_anime 5114          — по shikimori_id\n"
+            "  /post_anime Наруто       — по названию (title_ru / title_en)"
+        )
+        return
+
+    query = " ".join(context.args).strip()
+    dry_run = settings.get_runtime_dry_run()
+
+    def _find_and_publish() -> str:
+        from db.database import SessionLocal
+        from db.models import Anime
+        from services.publisher import publish_anime
+        from sqlalchemy import func
+
+        session = SessionLocal()
+        try:
+            anime = None
+
+            # Поиск по shikimori_id если аргумент — число
+            if query.lstrip("-").isdigit():
+                anime = session.query(Anime).filter(
+                    Anime.shikimori_id == int(query)
+                ).first()
+            else:
+                # Поиск по title_ru или title_en (без учёта регистра, частичное совпадение)
+                pattern = f"%{query}%"
+                anime = session.query(Anime).filter(
+                    (func.lower(Anime.title_ru).like(func.lower(pattern)))
+                    | (func.lower(Anime.title_en).like(func.lower(pattern)))
+                ).first()
+
+            if not anime:
+                return f"Аниме не найдено: {query!r}"
+
+            title = anime.title_ru or anime.title_en or "Без названия"
+            publish_anime(anime, dry_run=dry_run)
+            prefix = "[DRY RUN] " if dry_run else ""
+            return f"{prefix}Опубликовано: {title}"
+
+        finally:
+            session.close()
+
+    await update.effective_chat.send_message(f"Ищу: {query!r} (dry_run={dry_run})...")
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _find_and_publish)
+        await update.effective_chat.send_message(result)
+    except Exception as e:
+        logger.exception("Ошибка при выполнении /post_anime: %s", e)
+        await update.effective_chat.send_message("Ошибка при публикации. Подробности в логах.")
+
+
 def main() -> None:
     setup_logging()
 
@@ -218,6 +282,7 @@ def main() -> None:
 
             application.add_error_handler(_on_error)
             application.add_handler(CommandHandler("post_now", post_now))
+            application.add_handler(CommandHandler("post_anime", post_anime))
             application.add_handler(CommandHandler("status", status))
             application.add_handler(CommandHandler("dry_run_on", dry_run_on))
             application.add_handler(CommandHandler("dry_run_off", dry_run_off))
