@@ -253,6 +253,9 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     query = " ".join(context.args).strip()
+    if len(query) > 100:
+        await update.effective_chat.send_message("Слишком длинный запрос. Максимум 100 символов.")
+        return
     dry_run = settings.get_runtime_dry_run()
     loop = asyncio.get_running_loop()
 
@@ -304,12 +307,54 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         finally:
             session.close()
 
+    def _search_fuzzy() -> list:
+        """Fuzzy-поиск через rapidfuzz. Топ-3000 по popularity, нормализованные строки."""
+        from rapidfuzz import fuzz, process
+        from db.database import SessionLocal
+        from db.models import Anime
+        session = SessionLocal()
+        try:
+            rows = session.query(
+                Anime.id, Anime.title_ru, Anime.title_en,
+                Anime.year, Anime.kind, Anime.shikimori_id,
+            ).order_by(Anime.members.desc()).limit(3000).all()
+
+            keys: list[str] = []
+            data: list[tuple] = []
+            for r in rows:
+                combined = f"{r.title_ru or ''} {r.title_en or ''}".strip().lower()
+                if combined:
+                    keys.append(combined)
+                    data.append((r.id, r.title_ru, r.title_en, r.year, r.kind, r.shikimori_id))
+
+            matches = process.extract(
+                query.lower().strip(), keys,
+                scorer=fuzz.WRatio, limit=50, score_cutoff=65,
+            )
+            # m[2] — индекс в data (без потери при дублях названий)
+            return [data[m[2]] for m in matches]
+        finally:
+            session.close()
+
+
     try:
         results = await loop.run_in_executor(None, _search_by_title)
     except Exception as e:
         logger.exception("Ошибка при поиске аниме: %s", e)
         await update.effective_chat.send_message("Ошибка при поиске. Подробности в логах.")
         return
+
+    # Fuzzy fallback: если AND-поиск не дал результатов
+    # Запускаем только если хотя бы одно слово запроса длиннее 2 символов
+    fuzzy_used = False
+    if not results and any(len(w) >= 3 for w in query.strip().split()):
+        try:
+            results = await loop.run_in_executor(None, _search_fuzzy)
+            if results:
+                fuzzy_used = True
+                logger.info("Fuzzy-поиск по %r: найдено %d результатов", query, len(results))
+        except Exception as e:
+            logger.exception("Ошибка fuzzy-поиска: %s", e)
 
     if not results:
         await update.effective_chat.send_message(f"Ничего не найдено по запросу: {query!r}")
@@ -330,6 +375,11 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # >1 результата — генерируем session_id, строим клавиатуру, отправляем в один вызов
     total = len(results)
     suffix = " (показаны первые 50)" if total == 50 else ""
+    header = (
+        f"🔎 Fuzzy-поиск по {query!r}: {total}{suffix}"
+        if fuzzy_used else
+        f"🔍 Найдено: {total}{suffix}"
+    )
     session_id = f"{int(time.time())}{random.randint(1000, 9999)}"
     _cleanup_stale_searches(context.bot_data)
     context.bot_data.setdefault("anime_searches", {})
@@ -340,7 +390,7 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     }
     keyboard = _build_search_keyboard(results, 0, session_id)
     sent = await update.effective_chat.send_message(
-        f"🔍 Найдено: {total}{suffix}. Выберите аниме:",
+        f"{header}. Выберите аниме:",
         reply_markup=keyboard,
     )
     context.bot_data["anime_searches"][session_id]["message_id"] = sent.message_id
