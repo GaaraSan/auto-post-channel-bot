@@ -22,6 +22,7 @@ def parse_shikimori_anime(anime_id: int) -> dict:
         "shikimori_id": data["id"],
         "name": data["name"],
         "russian": data["russian"],
+        "japanese": data.get("japanese"),
         "description": data["description"],
         "status": data["status"],
         "kind": data.get("kind"),

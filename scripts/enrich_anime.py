@@ -16,10 +16,10 @@ import os
 import time
 
 import requests
-from sqlalchemy import text
+
 
 from app.logging_config import setup_logging
-from db.database import SessionLocal, engine
+from db.database import SessionLocal
 from db.models import Anime
 
 setup_logging()
@@ -69,28 +69,6 @@ def delete_checkpoint() -> None:
     except Exception as e:
         logger.warning("Не удалось удалить checkpoint: %s", e)
 
-
-# ---------------------------------------------------------------------------
-# Шаг 0: убедиться, что колонки существуют в SQLite
-# (SQLAlchemy create_all не добавляет колонки в уже существующую таблицу)
-# ---------------------------------------------------------------------------
-
-def ensure_columns_exist() -> None:
-    """Добавляет kind и members в таблицу anime, если их ещё нет."""
-    with engine.connect() as conn:
-        existing = {
-            row[1]  # имя колонки
-            for row in conn.execute(text("PRAGMA table_info(anime)"))
-        }
-
-    with engine.begin() as conn:
-        if "kind" not in existing:
-            conn.execute(text("ALTER TABLE anime ADD COLUMN kind TEXT"))
-            logger.info("Колонка 'kind' добавлена в таблицу anime")
-
-        if "members" not in existing:
-            conn.execute(text("ALTER TABLE anime ADD COLUMN members INTEGER"))
-            logger.info("Колонка 'members' добавлена в таблицу anime")
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +151,10 @@ def enrich(batch_size: int = 50, delay: float = 0.35) -> None:
     """
     Перебирает аниме, у которых members IS NULL или kind IS NULL,
     и дообогащает их из Shikimori API.
-    """
-    ensure_columns_exist()
 
+    Перед первым запуском на существующей БД выполни миграцию:
+        python -m scripts.migrate_add_kind_members
+    """
     session = SessionLocal()
     try:
         # Считаем, сколько записей нужно обработать (относительно всей таблицы)

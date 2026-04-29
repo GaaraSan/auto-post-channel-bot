@@ -76,7 +76,7 @@ def build_anime_object(data, session):
         shikimori_id=anime_id,
         title_ru=title_ru,
         title_en=data.get('name'),
-        title_original=data.get('name'),
+        title_original=data.get('japanese'),
         description=data.get('description'),
         status=data.get('status'),
         kind=data.get('kind'),
