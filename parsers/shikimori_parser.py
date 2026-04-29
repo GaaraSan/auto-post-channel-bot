@@ -18,11 +18,17 @@ def parse_shikimori_anime(anime_id: int) -> dict:
 
     stats = data.get("rates_statuses_stats") or []
 
+    japanese_raw = data.get("japanese")
+    if isinstance(japanese_raw, list):
+        japanese = japanese_raw[0] if japanese_raw else None
+    else:
+        japanese = japanese_raw
+
     return {
         "shikimori_id": data["id"],
         "name": data["name"],
         "russian": data["russian"],
-        "japanese": data.get("japanese"),
+        "japanese": japanese,
         "description": data["description"],
         "status": data["status"],
         "kind": data.get("kind"),
