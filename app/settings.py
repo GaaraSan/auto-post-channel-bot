@@ -16,6 +16,9 @@ DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 # Telegram Bot API token (обязателен для запуска telegram_bot).
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# Telegram-канал для публикаций (username или числовой chat_id).
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
+
 # Dry-run режим публикаций (конфигурация по умолчанию из окружения):
 # - полная логика выбора и форматирования;
 # - НЕТ отправки в Telegram;

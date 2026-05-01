@@ -1,13 +1,11 @@
-import os
 import asyncio
 import logging
 
 import httpx
-from dotenv import load_dotenv
 from telegram import Bot
 from telegram.error import BadRequest
 
-load_dotenv()
+from app.settings import BOT_TOKEN, CHANNEL_USERNAME
 
 logger = logging.getLogger(__name__)
 
@@ -19,28 +17,25 @@ async def send_post_async(text: str, image_url: str | None = None) -> None:
     """
     Асинхронная отправка поста в Telegram-канал (без кэширования).
     """
-    token = os.getenv("BOT_TOKEN")
-    channel = os.getenv("CHANNEL_USERNAME")
-
-    if not token or not channel:
+    if not BOT_TOKEN or not CHANNEL_USERNAME:
         logger.error("BOT_TOKEN или CHANNEL_USERNAME не заданы")
         raise RuntimeError("BOT_TOKEN или CHANNEL_USERNAME не заданы")
 
-    bot = Bot(token=token)
+    bot = Bot(token=BOT_TOKEN)
 
     try:
         if image_url:
             await bot.send_photo(
-                chat_id=channel,
+                chat_id=CHANNEL_USERNAME,
                 photo=image_url,
                 caption=text
             )
         else:
             await bot.send_message(
-                chat_id=channel,
+                chat_id=CHANNEL_USERNAME,
                 text=text
             )
-        logger.debug("Пост успешно отправлен в канал %s", channel)
+        logger.debug("Пост успешно отправлен в канал %s", CHANNEL_USERNAME)
     except Exception as e:
         logger.exception("Ошибка отправки поста в Telegram: %s", e)
         raise
@@ -76,20 +71,17 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
     """
     from db.models import Anime as AnimeModel  # локальный импорт — избегаем циклов
 
-    token = os.getenv("BOT_TOKEN")
-    channel = os.getenv("CHANNEL_USERNAME")
-
-    if not token or not channel:
+    if not BOT_TOKEN or not CHANNEL_USERNAME:
         logger.error("BOT_TOKEN или CHANNEL_USERNAME не заданы")
         raise RuntimeError("BOT_TOKEN или CHANNEL_USERNAME не заданы")
 
-    bot = Bot(token=token)
+    bot = Bot(token=BOT_TOKEN)
     image_url = getattr(anime, "image_url", None)
 
     # ── Сценарий A: есть закэшированный file_id ──────────────────────────────
     if anime.tg_file_id:
         try:
-            await bot.send_photo(chat_id=channel, photo=anime.tg_file_id, caption=text)
+            await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=anime.tg_file_id, caption=text)
             logger.debug("Фото отправлено по file_id (кэш): %s", anime.tg_file_id)
             return
         except BadRequest as e:
@@ -103,7 +95,7 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
     # ── Сценарий B: скачиваем и отправляем ───────────────────────────────────
     if not image_url:
         logger.warning("image_url отсутствует — отправляем только текст")
-        await bot.send_message(chat_id=channel, text=text)
+        await bot.send_message(chat_id=CHANNEL_USERNAME, text=text)
         return
 
     # Скачиваем через httpx (async — не блокирует event loop), 2 попытки
@@ -128,11 +120,11 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
                 "Изображение слишком большое (%d байт > 10 MB) — fallback: URL",
                 len(img_bytes),
             )
-            await bot.send_photo(chat_id=channel, photo=image_url, caption=text)
+            await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_url, caption=text)
             return
 
         # Отправляем bytes напрямую — tempfile не нужен
-        message = await bot.send_photo(chat_id=channel, photo=img_bytes, caption=text)
+        message = await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes, caption=text)
 
         file_id = message.photo[-1].file_id
         logger.debug("Фото отправлено, file_id получен: %s", file_id)
@@ -150,7 +142,7 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
         logger.warning(
             "Не удалось скачать изображение — fallback: отправка по URL: %s", image_url
         )
-        await bot.send_photo(chat_id=channel, photo=image_url, caption=text)
+        await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_url, caption=text)
 
 
 def send_post_with_cache(text: str, anime, session) -> None:

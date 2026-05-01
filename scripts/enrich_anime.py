@@ -201,7 +201,7 @@ def enrich(batch_size: int = 50, delay: float = 0.35) -> None:
                 if kind is not None or members is not None:
                     if kind is not None:
                         anime.kind = kind
-                    if members is not None:
+                    if members is not None and members > 0:
                         anime.members = members
                     updated += 1
                 else:

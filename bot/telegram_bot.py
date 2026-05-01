@@ -513,6 +513,13 @@ def main() -> None:
         logger.error("BOT_TOKEN не задан в окружении или settings")
         sys.exit(1)
 
+    if not ADMIN_IDS:
+        logger.warning(
+            "⚠️  ADMIN_IDS не задан — все пользователи Telegram имеют доступ "
+            "к командам управления ботом (/post_now, /posting_on и др.). "
+            "Задайте ADMIN_IDS в .env для ограничения доступа."
+        )
+
     try:
         lock_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), "logs", "telegram_bot.lock"
