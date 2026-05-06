@@ -1,32 +1,29 @@
 import os
 from dotenv import load_dotenv  # type: ignore[reportMissingImports]
 
-# .env должен быть загружен до создания STATE (см. app.runtime_state).
+# .env must be loaded before STATE is imported so env vars are visible to RuntimeState.
 load_dotenv()
 
 from app.runtime_state import STATE
 
-# Путь к файлу базы данных SQLite
+# SQLite database path, resolved relative to the project root.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATABASE_PATH = os.path.join(BASE_DIR, "anime.db")
 
-# Строка подключения SQLAlchemy
+# SQLAlchemy connection string.
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
-# Telegram Bot API token (обязателен для запуска telegram_bot).
+# Telegram Bot API token (required to start the bot).
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Telegram-канал для публикаций (username или числовой chat_id).
+# Telegram channel for publishing posts (username or numeric chat_id).
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 
-# Dry-run режим публикаций (конфигурация по умолчанию из окружения):
-# - полная логика выбора и форматирования;
-# - НЕТ отправки в Telegram;
-# - НЕТ записи в published_anime.
+# Default dry-run flag, read once at startup from the environment.
+# Can be toggled at runtime via Telegram commands without restarting.
 DRY_RUN = STATE.get_dry_run()
 
-# Runtime-флаг dry-run, который можно менять командами Telegram-бота,
-# без перезапуска процесса.
+
 def get_runtime_dry_run() -> bool:
     return STATE.get_dry_run()
 
@@ -55,8 +52,7 @@ def get_is_posting_now() -> bool:
     return STATE.get_is_posting_now()
 
 
-# Администраторы и разрешённые чаты для управления ботом.
-# Ожидаются как списки id через запятую в окружении.
+# Admin and allowed-chat ID lists parsed from comma-separated env vars.
 def _parse_id_list(value: str | None) -> list[int]:
     if not value:
         return []

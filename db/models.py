@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from db.database import Base
 
-# Промежуточная таблица many-to-many
+# Many-to-many join table between Anime and Genre.
 anime_genres = Table(
     "anime_genres",
     Base.metadata,
@@ -34,14 +34,14 @@ class Anime(Base):
 
     image_url = Column(String)
 
-    # дополнительные поля (добавлены для фильтрации качества)
-    kind    = Column(String,  nullable=True)  # tv, movie, ova, ona, special, music, cm, pv
-    members = Column(Integer, nullable=True)  # число людей, добавивших аниме на Shikimori
+    # "kind" values from Shikimori: tv, movie, ova, ona, special, music, cm, pv
+    kind    = Column(String,  nullable=True)
+    # Number of Shikimori users who added this anime to their list.
+    members = Column(Integer, nullable=True)
 
-    # кэш Telegram file_id: при повторной отправке не нужно скачивать изображение
+    # Cached Telegram file_id — avoids re-downloading the image on repeated posts.
     tg_file_id = Column(String, nullable=True)
 
-    # связь с жанрами
     genres = relationship(
         "Genre",
         secondary=anime_genres,
@@ -82,4 +82,3 @@ class PublishedAnime(Base):
     )
 
     anime = relationship("Anime")
-

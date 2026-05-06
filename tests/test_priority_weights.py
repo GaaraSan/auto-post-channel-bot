@@ -1,7 +1,7 @@
 """
-Тесты системы штрафов priority_weights.
+Tests for the priority self-correction system (app/priority_weights.py).
 
-Все функции принимают чистые dict/SimpleNamespace → нет БД, нет моков.
+All functions accept plain dicts/SimpleNamespace — no DB, no mocks needed.
 """
 from types import SimpleNamespace
 
@@ -28,7 +28,7 @@ def test_year_bucket_boundaries():
 # ── get_penalty_multipliers ───────────────────────────────────────────────────
 
 def test_get_penalty_multipliers_balanced_no_penalty():
-    """Равномерное распределение → никаких штрафов (все множители == 1.0)."""
+    """Balanced distribution → no penalties (all multipliers == 1.0)."""
     stats = {
         "_n": 6,
         "status": {"released": 3, "ongoing": 3},
@@ -38,14 +38,14 @@ def test_get_penalty_multipliers_balanced_no_penalty():
     penalties = get_penalty_multipliers(stats, n=6)
     for cat in ("status", "year_bucket", "genre_id"):
         for val in penalties[cat].values():
-            assert val == 1.0, f"{cat} должен быть 1.0 при равномерном распределении"
+            assert val == 1.0, f"{cat} should be 1.0 for a balanced distribution"
 
 
 def test_get_penalty_multipliers_clamped_to_min():
-    """Доминирующая категория не опускается ниже MIN_PENALTY."""
+    """Dominant category must not drop below MIN_PENALTY."""
     stats = {
         "_n": 10,
-        "status": {"released": 10},   # 100% — максимальный перекос
+        "status": {"released": 10},   # 100% skew — maximum imbalance
         "year_bucket": {},
         "genre_id": {},
     }
@@ -54,7 +54,7 @@ def test_get_penalty_multipliers_clamped_to_min():
 
 
 def test_get_penalty_multipliers_no_crash_on_empty():
-    """Пустая статистика не вызывает исключений."""
+    """Empty statistics must not raise any exceptions."""
     stats = {"_n": 0, "status": {}, "year_bucket": {}, "genre_id": {}}
     penalties = get_penalty_multipliers(stats, n=0)
     assert "status" in penalties
@@ -63,7 +63,7 @@ def test_get_penalty_multipliers_no_crash_on_empty():
 # ── get_penalty_for_anime ─────────────────────────────────────────────────────
 
 def test_get_penalty_for_anime_combines_multipliers():
-    """Итоговый множитель = произведение status * year * genre-множителей."""
+    """Combined multiplier == status × year_bucket × genre product."""
     genre = SimpleNamespace(id=1)
     anime = SimpleNamespace(status="released", year=2021, genres=[genre])
 

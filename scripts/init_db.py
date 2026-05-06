@@ -4,7 +4,7 @@ from db.models import Base
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    print("База данных и таблицы успешно созданы")
+    print("Database and tables created successfully")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Миграция: добавить колонки kind и members в таблицу anime.
+Migration: add 'kind' and 'members' columns to the anime table.
 
-Идемпотентна — безопасно запускать несколько раз:
-если колонки уже существуют, скрипт завершится без ошибок.
+Idempotent — safe to run multiple times:
+if the columns already exist the script exits without errors.
 
-Запуск: python -m scripts.migrate_add_kind_members
+Usage: python -m scripts.migrate_add_kind_members
 """
 import logging
 
@@ -33,17 +33,17 @@ def run() -> None:
             for col, col_type in COLUMNS.items():
                 if col in existing:
                     logger.info(
-                        "Колонка '%s' уже существует в таблице '%s' — пропускаем.",
+                        "Column '%s' already exists in table '%s' — skipping.",
                         col, TABLE,
                     )
                 else:
                     conn.execute(text(f"ALTER TABLE {TABLE} ADD COLUMN {col} {col_type}"))
                     logger.info(
-                        "Колонка '%s' успешно добавлена в таблицу '%s'.",
+                        "Column '%s' successfully added to table '%s'.",
                         col, TABLE,
                     )
     except Exception:
-        logger.exception("Ошибка при выполнении миграции")
+        logger.exception("Error running migration")
         raise
 
 

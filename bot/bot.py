@@ -28,7 +28,7 @@ def main():
             image_url=anime.image_url
         )
 
-        print("✔ Пост успешно отправлен в канал")
+        print("✔ Post successfully sent to channel")
 
     finally:
         session.close()

@@ -1,7 +1,7 @@
 """
-Тесты calculate_weight — числовая логика скоринга аниме.
+Tests for calculate_weight — the numeric anime scoring logic.
 
-Все тесты изолированы: используют только SimpleNamespace, без БД.
+All tests are isolated: use SimpleNamespace only, no DB required.
 """
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -12,7 +12,7 @@ _CURRENT_YEAR = datetime.now(UTC).year
 
 
 def _anime(**kwargs) -> SimpleNamespace:
-    """Минимальный аниме-объект с дефолтами."""
+    """Minimal anime object with sensible defaults."""
     defaults = dict(
         rating=7.0, members=5000, year=_CURRENT_YEAR - 5,
         episodes=12, status="released",
@@ -22,27 +22,27 @@ def _anime(**kwargs) -> SimpleNamespace:
 
 
 def test_calculate_weight_always_positive():
-    """Вес всегда > 0 даже для «мусорного» аниме."""
+    """Weight is always > 0 even for a worst-case anime."""
     worst = _anime(rating=0.1, members=1, year=1970, episodes=1, status="released")
     assert calculate_weight(worst) > 0
 
 
 def test_calculate_weight_recent_anime_gets_bonus():
-    """Аниме текущего года получает бонус +5 по сравнению с аниме 10-летней давности."""
+    """Current-year anime gets a +5 bonus over anime from 10 years ago."""
     recent = _anime(year=_CURRENT_YEAR)
     old    = _anime(year=_CURRENT_YEAR - 10)
     assert calculate_weight(recent) > calculate_weight(old)
 
 
 def test_calculate_weight_old_anime_gets_penalty():
-    """Аниме старше 15 лет имеет меньший вес, чем аниме 5-летней давности."""
+    """Anime older than 15 years has a lower weight than 5-year-old anime."""
     very_old = _anime(year=_CURRENT_YEAR - 20)
     mid      = _anime(year=_CURRENT_YEAR - 5)
     assert calculate_weight(very_old) < calculate_weight(mid)
 
 
 def test_calculate_weight_status_bonus():
-    """ongoing получает больший бонус, чем released."""
+    """Ongoing status gets a higher bonus than released."""
     ongoing  = _anime(status="ongoing")
     released = _anime(status="released")
     assert calculate_weight(ongoing) > calculate_weight(released)

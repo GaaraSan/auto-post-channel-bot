@@ -1,7 +1,7 @@
 """
-Тесты форматирования постов (bot/formatter.py).
+Tests for post formatting functions (bot/formatter.py).
 
-Чистые функции без внешних зависимостей — никаких фикстур и моков.
+Pure functions with no external dependencies — no fixtures or mocks needed.
 """
 from types import SimpleNamespace
 
@@ -39,9 +39,9 @@ def test_truncate_text_short_text_unchanged():
 def test_truncate_text_respects_word_boundary():
     text = "один два три четыре пять"
     result = truncate_text(text, 12)
-    # Обрезаем по слову, добавляем «…», не рвём слова посередине
+    # Truncates at a word boundary, appends "…", never cuts mid-word.
     assert result.endswith("…")
-    assert "три" not in result  # не влезает
+    assert "три" not in result  # doesn't fit within the limit
     assert result.startswith("один два")
 
 

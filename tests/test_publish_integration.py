@@ -1,8 +1,8 @@
 """
-Интеграционные тесты publish_anime (services/publisher.py).
+Integration tests for publish_anime (services/publisher.py).
 
-Мокируем только send_post_with_cache (реальный Telegram-запрос).
-SessionLocal подменяем на in-memory фабрику из conftest.
+Only send_post_with_cache is mocked (real Telegram request).
+SessionLocal is replaced with the in-memory factory from conftest.
 """
 import pytest
 from unittest.mock import patch
@@ -19,7 +19,7 @@ def _count_published(session_factory) -> int:
 
 
 def test_publish_anime_dry_run_does_not_write_db(session_factory, sample_anime):
-    """dry_run=True → ни одной записи в PublishedAnime, send не вызван."""
+    """dry_run=True → no PublishedAnime record created, send not called."""
     with patch("services.publisher.SessionLocal", session_factory):
         with patch("services.publisher.send_post_with_cache") as mock_send:
             publish_anime(sample_anime, dry_run=True)
@@ -29,7 +29,7 @@ def test_publish_anime_dry_run_does_not_write_db(session_factory, sample_anime):
 
 
 def test_publish_anime_creates_published_record(session_factory, sample_anime):
-    """dry_run=False → запись в PublishedAnime создана с правильными полями."""
+    """dry_run=False → PublishedAnime record created with correct fields."""
     with patch("services.publisher.SessionLocal", session_factory):
         with patch("services.publisher.send_post_with_cache"):
             publish_anime(sample_anime, dry_run=False)
@@ -44,7 +44,7 @@ def test_publish_anime_creates_published_record(session_factory, sample_anime):
 
 
 def test_publish_anime_rollback_on_send_error(session_factory, sample_anime):
-    """Ошибка при отправке → rollback → PublishedAnime не создана."""
+    """Send error → rollback → no PublishedAnime record created."""
     from telegram.error import NetworkError
 
     with patch("services.publisher.SessionLocal", session_factory):

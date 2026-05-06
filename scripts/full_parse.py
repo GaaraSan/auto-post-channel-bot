@@ -8,18 +8,18 @@ from db.models import Anime, Genre
 try:
     from parsers.shikimori_parser import get_anime_ids, parse_shikimori_anime
 except ImportError as e:
-    print(f"[!] Ошибка импорта парсера: {e}")
+    print(f"[!] Parser import error: {e}")
     sys.exit(1)
 
 STATE_FILE = Path("parse_state.txt")
 PER_PAGE = 50
 
-# --- КЕШИ ---
-genres_cache = {}       # name -> Genre объект
-existing_ids = set()    # уже существующие shikimori_id
+# In-memory caches to avoid redundant DB queries during a parse run.
+genres_cache = {}    # genre name → Genre ORM object
+existing_ids = set() # shikimori_ids already in the DB
 
 
-# -------------------- UTILS --------------------
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def safe_int(val):
     return int(val) if val and str(val).isdigit() else None
@@ -42,33 +42,31 @@ def save_last_page(page):
     STATE_FILE.write_text(str(page))
 
 
-# -------------------- INIT CACHE --------------------
+# ── Cache pre-load ────────────────────────────────────────────────────────────
 
 def preload_data(session):
     global existing_ids, genres_cache
 
-    print("[*] Предзагрузка данных из БД...")
+    print("[*] Pre-loading data from DB…")
 
-    # Все существующие ID загружаем в память для мгновенной проверки
+    # Load all existing shikimori_ids for O(1) duplicate checks.
     existing_ids = set(
         x[0] for x in session.query(Anime.shikimori_id).all()
     )
 
-    # Все жанры загружаем в память
     genres = session.query(Genre).all()
     genres_cache = {g.name: g for g in genres}
 
-    print(f"[+] Загружено {len(existing_ids)} аниме и {len(genres_cache)} жанров")
+    print(f"[+] Loaded {len(existing_ids)} anime and {len(genres_cache)} genres")
 
 
-# -------------------- CORE --------------------
+# ── Core ──────────────────────────────────────────────────────────────────────
 
 def build_anime_object(data, session):
     anime_id = data['shikimori_id']
 
-    # Мгновенная проверка на дубликат (О(1))
     if anime_id in existing_ids:
-        return None
+        return None  # already in DB — skip
 
     title_ru = data.get('russian') or data.get('name') or "Без названия"
 
@@ -88,23 +86,21 @@ def build_anime_object(data, session):
         image_url=data.get('image')
     )
 
-    # --- ЖАНРЫ С КЕШЕМ ---
     for g_name in data.get('genres', []):
         if not g_name:
             continue
 
         if g_name not in genres_cache:
-            # Новый жанр - добавляем в БД и в кэш
+            # New genre — persist it and add to the local cache.
             genre_obj = Genre(name=g_name)
             session.add(genre_obj)
             genres_cache[g_name] = genre_obj
         else:
-            # Жанр уже есть - берем из кэша
             genre_obj = genres_cache[g_name]
 
         new_anime.genres.append(genre_obj)
 
-    existing_ids.add(anime_id) # Добавляем новый ID в кэш
+    existing_ids.add(anime_id)
     return new_anime
 
 
@@ -112,17 +108,17 @@ def main():
     session = SessionLocal()
     page = load_last_page()
 
-    print(f"[*] Старт со страницы: {page}")
+    print(f"[*] Starting from page: {page}")
 
     preload_data(session)
 
     try:
         while True:
-            print(f"\n--- Страница {page} ---")
+            print(f"\n--- Page {page} ---")
 
             ids = get_anime_ids(page=page, limit=PER_PAGE)
             if not ids:
-                print("[*] Парсинг завершен! Новых аниме нет.")
+                print("[*] Parsing complete — no new anime.")
                 break
 
             batch = []
@@ -138,15 +134,14 @@ def main():
                     time.sleep(0.3)
 
                 except Exception as e:
-                    print(f"[!] Ошибка обработки ID {a_id}: {e}")
+                    print(f"[!] Error processing ID {a_id}: {e}")
                     continue
 
-            # --- BATCH INSERT ---
             if batch:
                 session.add_all(batch)
                 session.commit()
-            
-            print(f"[+] Страница {page} обработана. Добавлено: {len(batch)}")
+
+            print(f"[+] Page {page} done. Added: {len(batch)}")
 
             save_last_page(page)
             page += 1
@@ -154,16 +149,16 @@ def main():
             time.sleep(1.5)
 
     except KeyboardInterrupt:
-        print("\n[!] Остановка скрипта...")
+        print("\n[!] Interrupted by user — committing current state…")
         session.commit()
 
     except Exception as e:
-        print(f"\n[!] Критическая ошибка: {e}")
+        print(f"\n[!] Fatal error: {e}")
         session.rollback()
 
     finally:
         session.close()
-        print("[*] Завершено")
+        print("[*] Done")
 
 
 if __name__ == "__main__":

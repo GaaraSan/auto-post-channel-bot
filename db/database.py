@@ -3,14 +3,14 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 from app.settings import DATABASE_URL
 
-# Создаём движок SQLAlchemy
+# SQLAlchemy engine bound to the configured database URL.
 engine = create_engine(
     DATABASE_URL,
-    echo=False,          # True — если хочешь видеть SQL-запросы
+    echo=False,   # set to True to print all SQL statements for debugging
     future=True
 )
 
-# Фабрика сессий (подключений к БД)
+# Session factory — each call to SessionLocal() returns a new session.
 SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,
@@ -18,5 +18,5 @@ SessionLocal = sessionmaker(
     future=True
 )
 
-# Базовый класс для всех моделей
+# Base class for all ORM models.
 Base = declarative_base()

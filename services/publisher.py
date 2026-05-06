@@ -14,27 +14,29 @@ logger = logging.getLogger(__name__)
 
 def publish_anime(anime, *, dry_run: bool = False) -> None:
     """
-    Единственная точка публикации аниме.
+    Single entry point for publishing an anime post.
 
-    Делает:
-    - формирование текста поста;
-    - отправку в Telegram с кэшированием фото через file_id (если dry_run=False);
-    - запись факта публикации в PublishedAnime (если dry_run=False);
-    - логирование ключевых шагов и ошибок.
+    Steps:
+      1. Format the post text.
+      2. Send to Telegram with file_id caching (skipped in dry_run mode).
+      3. Record the publication in PublishedAnime (skipped in dry_run mode).
+
+    The Telegram send and the DB write share a single commit so they succeed
+    or roll back together — no orphaned records or silent double-posts.
     """
     session = SessionLocal()
     try:
         title = getattr(anime, "title_ru", None) or getattr(anime, "title_en", None) or "Без названия"
-        logger.info("Публикация аниме: %s (dry_run=%s)", title, dry_run)
+        logger.info("Publishing anime: %s (dry_run=%s)", title, dry_run)
 
         post_text = format_anime_post(anime)
 
         if dry_run:
-            logger.info("DRY RUN: сообщение НЕ отправлено и НЕ записано в БД")
-            logger.debug("DRY RUN текст:\n%s", post_text)
+            logger.info("DRY RUN: message NOT sent, DB NOT updated")
+            logger.debug("DRY RUN text:\n%s", post_text)
             return
 
-        # send_post_with_cache: скачивает фото → отправляет → сохраняет file_id в session (без commit)
+        # send_post_with_cache: downloads photo → sends → saves file_id in session (no commit yet)
         send_post_with_cache(text=post_text, anime=anime, session=session)
 
         pub = PublishedAnime(
@@ -44,20 +46,20 @@ def publish_anime(anime, *, dry_run: bool = False) -> None:
             published_at=datetime.now(UTC),
         )
         session.add(pub)
-        session.commit()  # единый commit: tg_file_id + PublishedAnime
+        session.commit()  # single commit: tg_file_id update + PublishedAnime insert
 
-        logger.info("Публикация завершена: %s", title)
+        logger.info("Published: %s", title)
 
     except NetworkError as e:
-        # Сетевые ошибки Telegram (ДНС, таймаут) — краткий WARNING без traceback
+        # Telegram network / DNS / timeout error — log a warning and re-raise.
+        # The caller (post_cycle) handles the retry / skip logic.
         session.rollback()
-        logger.warning("Сетевая ошибка Telegram при публикации: %s", e)
+        logger.warning("Telegram network error during publish: %s", e)
         raise
     except Exception:
         session.rollback()
-        logger.exception("Ошибка публикации аниме")
+        logger.exception("Unexpected error while publishing anime")
         raise
 
     finally:
         session.close()
-

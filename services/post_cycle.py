@@ -12,7 +12,16 @@ logger = logging.getLogger(__name__)
 
 def run_post_cycle(*, dry_run: bool = False) -> dict:
     """
-    Один цикл работы: выбрать аниме → опубликовать → залогировать результат.
+    Execute one posting cycle: pick an anime → publish → return a status dict.
+
+    A file lock prevents concurrent cycles. The is_posting_now flag is set
+    for the duration so /status can report an in-progress post.
+
+    Return values:
+        {"status": "ok",       "anime_id": int, "title": str}
+        {"status": "no_anime"}
+        {"status": "error",    "reason": "select_failed"}
+        {"status": "locked"}
     """
     lock_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "posting.lock")
     try:
@@ -22,16 +31,15 @@ def run_post_cycle(*, dry_run: bool = False) -> dict:
             anime = random_picker.get_random_anime()
             if not anime:
                 if random_picker.LAST_SELECT_ERROR is not None:
-                    logger.error("Сбой при выборе аниме; публикация пропущена")
+                    logger.error("Anime selection failed; skipping cycle")
                     return {"status": "error", "reason": "select_failed"}
-                logger.warning("Нет аниме для публикации")
+                logger.warning("No anime available for posting")
                 return {"status": "no_anime"}
 
             publish_anime(anime, dry_run=dry_run)
             return {"status": "ok", "anime_id": getattr(anime, "id", None), "title": getattr(anime, "title_ru", None)}
     except LockAlreadyHeldError:
-        logger.warning("Публикация пропущена: уже идёт другой цикл (lock)")
+        logger.warning("Posting skipped: another cycle is already running (lock)")
         return {"status": "locked"}
     finally:
         STATE.set_is_posting_now(False)
-

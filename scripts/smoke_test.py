@@ -12,13 +12,12 @@ from db.models import Anime
 
 logger = logging.getLogger(__name__)
 
-# Подтягиваем переменные окружения из .env,
-# чтобы SMOKE тест видел BOT_TOKEN и прочие настройки.
+# Load .env so BOT_TOKEN and other settings are available during the smoke test.
 load_dotenv()
 
 
 def check_db() -> bool:
-    """Проверка подключения к БД и базовой работоспособности ORM."""
+    """Verify DB connectivity and basic ORM functionality."""
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -35,12 +34,12 @@ def check_db() -> bool:
 
 
 async def check_telegram_async() -> bool:
-    """Проверка валидности Telegram-токена без отправки сообщений."""
+    """Verify the Telegram bot token without sending any messages."""
     from telegram import Bot as TgBot  # type: ignore[reportMissingImports]  # lazy import
 
     token = os.getenv("BOT_TOKEN")
     if not token:
-        logger.error("SMOKE TELEGRAM: BOT_TOKEN не задан")
+        logger.error("SMOKE TELEGRAM: BOT_TOKEN is not set")
         return False
 
     try:
@@ -68,4 +67,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Централизованная настройка логирования для скриптов проекта.
-Только стандартный модуль logging, без сторонних библиотек.
+Centralized logging configuration for all project scripts.
+Uses only the standard library — no third-party dependencies.
 """
 
 import logging
@@ -18,22 +18,22 @@ def setup_logging(
     stream: Optional[object] = None,
 ) -> None:
     """
-    Настраивает корневой логгер:
-    - единый формат сообщений;
-    - вывод в консоль;
-    - при наличии пути LOG_FILE — дублирование в файл.
+    Configure the root logger with a unified format.
 
-    Вызывать при старте скрипта (например, в __main__).
+    Outputs to stderr by default; also writes to a rotating log file
+    (logs/bot.log) unless LOG_FILE env var overrides the path.
+
+    Call once at script startup (e.g. in __main__).
     """
     if stream is None:
         stream = sys.stderr
 
-    # Уровень логирования можно переопределить через переменную окружения LOG_LEVEL
+    # Allow overriding the log level at runtime via LOG_LEVEL env var.
     env_level = os.getenv("LOG_LEVEL")
     if env_level:
         level = getattr(logging, env_level.upper(), level)
 
-    # Путь к файлу логов: по умолчанию logs/bot.log в корне проекта.
+    # Default log file: <project_root>/logs/bot.log
     log_file = os.getenv("LOG_FILE")
     if not log_file:
         log_dir = os.path.join(BASE_DIR, "logs")
@@ -45,7 +45,7 @@ def setup_logging(
         handlers.append(
             RotatingFileHandler(
                 log_file,
-                maxBytes=5 * 1024 * 1024,  # ~5 MB
+                maxBytes=5 * 1024 * 1024,  # 5 MB per file
                 backupCount=5,
                 encoding="utf-8",
             )
@@ -59,6 +59,6 @@ def setup_logging(
         force=True,
     )
 
-    # Убираем шумные DEBUG/INFO логи от HTTP клиента библиотеки Telegram.
-    # По умолчанию оставляем WARNING+, чтобы логи бота не засорялись getUpdates/send*.
+    # Suppress verbose DEBUG/INFO from the Telegram/httpx HTTP layer.
+    # WARNING+ is enough — we don't need a log line per getUpdates poll.
     logging.getLogger("httpx").setLevel(logging.WARNING)

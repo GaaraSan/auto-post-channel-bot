@@ -13,5 +13,5 @@ if __name__ == "__main__":
     try:
         run_post_cycle(dry_run=DRY_RUN)
     except Exception:
-        logger.exception("Критическая ошибка при запуске публикации")
+        logger.exception("Fatal error during post cycle")
         sys.exit(1)

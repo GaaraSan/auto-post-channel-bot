@@ -11,12 +11,14 @@ logger = logging.getLogger(__name__)
 
 async def auto_poster_loop() -> None:
     """
-    Автопостинг с случайным интервалом.
+    Background auto-posting loop with a randomised interval.
 
-    Не отправляет сообщения в Telegram напрямую.
-    Управляется через RuntimeState (enabled + interval).
+    Reads posting_enabled and interval from RuntimeState on every iteration
+    so they can be adjusted via Telegram commands without restarting the bot.
+    Telegram send calls happen inside run_post_cycle (via executor),
+    not directly in this coroutine.
     """
-    logger.info("AUTO poster loop started")
+    logger.info("Auto-poster loop started")
     while True:
         try:
             if STATE.get_posting_enabled():
@@ -24,17 +26,16 @@ async def auto_poster_loop() -> None:
                 result = await asyncio.get_running_loop().run_in_executor(
                     None, lambda: run_post_cycle(dry_run=dry_run)
                 )
-                logger.info("AUTO cycle result=%s", result.get("status") if isinstance(result, dict) else result)
+                logger.info("Auto cycle result=%s", result.get("status") if isinstance(result, dict) else result)
 
             min_s, max_s = STATE.get_interval()
             interval = random.randint(min_s, max_s)
-            logger.info("AUTO next interval: %ss", interval)
+            logger.info("Auto next interval: %ss", interval)
             await asyncio.sleep(interval)
         except NetworkError as e:
-            # Сетевые ошибки Telegram (ДНС, таймаут) — краткий WARNING без traceback
-            logger.warning("Сетевая ошибка при автопостинге, продолжаю работу: %s", e)
+            # Transient Telegram network error — log and retry after a short delay.
+            logger.warning("Network error in auto-poster, continuing: %s", e)
             await asyncio.sleep(5)
         except Exception:
-            logger.exception("Ошибка в AUTO loop; продолжаю работу")
+            logger.exception("Unexpected error in auto-poster loop, continuing")
             await asyncio.sleep(5)
-

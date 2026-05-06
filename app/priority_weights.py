@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Система самокоррекции приоритетов публикации.
+Priority self-correction system.
 
-Снижает приоритет категорий (жанр, год, статус), перепредставленных
-в последних N публикациях. Не меняет cooldown и can_publish.
-Веса считаются из скользящего окна — возврат к норме автоматический.
+Reduces the priority of categories (genre, year bucket, status) that are
+over-represented in the last N publications. Does not affect cooldown logic.
+Weights are recalculated from a sliding window, so balance is restored automatically.
 """
 
 from collections import defaultdict
@@ -15,18 +15,17 @@ from sqlalchemy.orm import Session, joinedload
 from db.models import PublishedAnime, Anime
 
 
-# --- Конфигурируемые коэффициенты (прозрачные, объяснимые) ---
+# --- Tunable coefficients ---
 
-# Размер окна последних публикаций для подсчёта перекоса
+# Number of recent publications used to detect over-representation.
 WINDOW_SIZE = 30
 
-# Минимальный множитель: категория не может быть полностью «заглушена»
+# Floor multiplier: no category can be silenced completely.
 MIN_PENALTY = 0.3
 
-# Годовые корзины для анализа перекоса по году выпуска
-# (name, min_year включительно). Порядок: от старых к новым.
+# Year buckets for skew analysis (name, inclusive min_year), oldest first.
 YEAR_BUCKETS = [
-    ("old", None),       # year < 2000 или None
+    ("old", None),       # year < 2000 or None
     ("2000-2009", 2000),
     ("2010-2014", 2010),
     ("2015-2019", 2015),
@@ -35,7 +34,7 @@ YEAR_BUCKETS = [
 
 
 def _year_bucket(year: Optional[int]) -> str:
-    """Определяет корзину года выпуска."""
+    """Map a release year to its bucket name."""
     if year is None:
         return "old"
     for name, min_year in reversed(YEAR_BUCKETS):
@@ -46,12 +45,13 @@ def _year_bucket(year: Optional[int]) -> str:
 
 def get_publication_stats(session: Session, n: int = WINDOW_SIZE) -> dict:
     """
-    Собирает статистику по последним n публикациям.
+    Aggregate statistics over the last n publications.
 
-    Возвращает:
-      - "status": { status_str: count }
-      - "year_bucket": { bucket_name: count }
-      - "genre_id": { genre_id: count }
+    Returns a dict with keys:
+        "_n"          – actual number of records found
+        "status"      – {status_str: count}
+        "year_bucket" – {bucket_name: count}
+        "genre_id"    – {genre_id: count}
     """
     pub_list = (
         session.query(PublishedAnime)
@@ -86,13 +86,14 @@ def get_publication_stats(session: Session, n: int = WINDOW_SIZE) -> dict:
 
 def get_penalty_multipliers(stats: dict, n: Optional[int] = None) -> dict:
     """
-    По статистике последних n публикаций считает множители (< 1 = понижение приоритета).
-    n: размер окна; если не передан, берётся stats["_n"] или WINDOW_SIZE.
+    Compute penalty multipliers (< 1.0 means lower priority) from publication stats.
 
-    Возвращает:
-      - "status": { status_str: multiplier }
-      - "year_bucket": { bucket_name: multiplier }
-      - "genre_id": { genre_id: multiplier }
+    Formula: multiplier = expected_share / actual_share, clamped to [MIN_PENALTY, 1.0].
+    A balanced distribution yields 1.0 for all categories.
+
+    Args:
+        stats: output of get_publication_stats()
+        n:     window size override; defaults to stats["_n"] or WINDOW_SIZE
     """
     n = n if n is not None else stats.get("_n", WINDOW_SIZE)
 
@@ -122,20 +123,16 @@ def get_penalty_multipliers(stats: dict, n: Optional[int] = None) -> dict:
 
 def get_penalty_for_anime(anime: Anime, penalties: dict) -> float:
     """
-    Итоговый множитель для одного аниме по предпосчитанным penalties.
+    Compute the combined penalty multiplier for a single anime.
 
-    Умножается на базовый вес; чем меньше — тем ниже приоритет.
+    Multiplies the status, year-bucket, and genre penalties together.
+    Multiple over-represented genres compound the reduction (product, not average).
     """
     status_mult = penalties["status"].get(anime.status or "unknown", 1.0)
     year_mult = penalties["year_bucket"].get(_year_bucket(anime.year), 1.0)
 
-    genre_mults = []
-    for g in anime.genres or []:
-        genre_mults.append(penalties["genre_id"].get(g.id, 1.0))
     genre_mult = 1.0
-    if genre_mults:
-        # произведение по жанрам — несколько перепредставленных жанров сильнее снижают
-        for m in genre_mults:
-            genre_mult *= m
+    for g in anime.genres or []:
+        genre_mult *= penalties["genre_id"].get(g.id, 1.0)
 
     return status_mult * year_mult * genre_mult

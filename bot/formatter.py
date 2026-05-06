@@ -1,7 +1,7 @@
 import re
 
 
-# Максимальная длина описания (безопасно для caption)
+# Maximum description length — safe upper bound for a Telegram caption.
 MAX_DESCRIPTION_LENGTH = 700
 
 
@@ -15,52 +15,52 @@ STATUS_MAP = {
 
 def clean_text(text: str) -> str:
     """
-    Очищает описание от BB-тегов Shikimori/стандартного BBcode.
+    Strip Shikimori / BBCode markup from a description string.
 
-    Стратегия:
-      1. Парные теги с содержимым → оставляем только содержимое (не жадные regex)
-      2. Одиночные/незакрытые/остаточные теги → удаляем по whitelist известных имён
-         (универсальный [.*?] НЕ используется — он ломает обычный текст)
-      3. Нормализация пробелов и переносов строк
+    Strategy:
+      1. Paired tags with content — keep inner text only (non-greedy regex).
+      2. Remaining unpaired / residual tags — remove via a known-tag whitelist
+         (a universal [.*?] pattern is intentionally avoided — it breaks
+         ordinary bracketed text in descriptions).
+      3. Normalize whitespace and blank lines.
     """
     if not text:
         return ""
 
-    # ── Шаг 1: парные теги ─────────────────────────────────────────────────────
+    # ── Step 1: paired tags ───────────────────────────────────────────────────
 
-    # [character=123]Имя[/character] → Имя
+    # [character=123]Name[/character] → Name
     text = re.sub(r"\[character=\d+\](.*?)\[/character\]", r"\1", text, flags=re.DOTALL)
 
-    # [[Имя]] → Имя  (двойные скобки — внутренние ссылки Shikimori)
+    # [[Name]] → Name  (Shikimori internal wiki links)
     text = re.sub(r"\[\[(.+?)\]\]", r"\1", text)
 
-    # [url=http://...]Текст[/url] → Текст
+    # [url=http://...]Label[/url] → Label
     text = re.sub(r"\[url=[^\]]*\](.*?)\[/url\]", r"\1", text, flags=re.DOTALL)
 
-    # [url]http://...[/url] → удаляем (голая ссылка без текста не нужна)
+    # [url]http://...[/url] → "" (bare URL with no label — not useful in a post)
     text = re.sub(r"\[url\].*?\[/url\]", "", text, flags=re.DOTALL)
 
-    # [spoiler]Текст[/spoiler] и [spoiler=Заголовок]Текст[/spoiler] → Текст
-    text = re.sub(r"\[spoiler(?:=[^\]]*)?\](.*?)\[/spoiler\]", r"\1", text, flags=re.DOTALL)
+    # [spoiler]Text[/spoiler] and [spoiler=Title]Text[/spoiler] → Text
+    text = re.sub(r"\[spoiler(?:=[^\]]*)?](.*?)\[/spoiler\]", r"\1", text, flags=re.DOTALL)
 
-    # [quote]Текст[/quote] и [quote=Автор]Текст[/quote] → Текст
-    text = re.sub(r"\[quote(?:=[^\]]*)?\](.*?)\[/quote\]", r"\1", text, flags=re.DOTALL)
+    # [quote]Text[/quote] and [quote=Author]Text[/quote] → Text
+    text = re.sub(r"\[quote(?:=[^\]]*)?](.*?)\[/quote\]", r"\1", text, flags=re.DOTALL)
 
-    # [b]/[i]/[u]/[s]/[center]/[right]/[size=N] → только текст внутри
+    # Formatting tags: [b], [i], [u], [s], [center], [right], [size=N] → inner text
     for tag in ("b", "i", "u", "s", "center", "right", "size"):
         text = re.sub(
             rf"\[{tag}(?:=[^\]]*)?\](.*?)\[/{tag}\]",
             r"\1", text, flags=re.DOTALL,
         )
 
-    # [anime=123]Название[/anime] → Название
+    # [anime=123]Title[/anime] → Title
     text = re.sub(r"\[anime=\d+\](.*?)\[/anime\]", r"\1", text, flags=re.DOTALL)
 
-    # Любой вид [tag=id]...[/tag] — общий fallback для ranobe/manga/person/etc.
+    # Generic fallback for [tag=id]...[/tag] (ranobe, manga, person, etc.)
     text = re.sub(r"\[\w+=\d+\](.*?)\[/\w+\]", r"\1", text, flags=re.DOTALL)
 
-    # ── Шаг 2: одиночные / остаточные теги ────────────────────────────────────
-    # Работаем ТОЛЬКО по whitelist — не задеваем обычные скобки в тексте.
+    # ── Step 2: unpaired / residual tags (whitelist only) ────────────────────
 
     _KNOWN = (
         "anime", "manga", "ranobe", "character", "person",
@@ -73,26 +73,22 @@ def clean_text(text: str) -> str:
         "", text,
     )
 
-    # ── Шаг 3: нормализация ────────────────────────────────────────────────────
+    # ── Step 3: normalise whitespace ─────────────────────────────────────────
 
-    # Не более двух переносов строк подряд
+    # Collapse 3+ consecutive newlines to 2.
     text = re.sub(r"\n{3,}", "\n\n", text)
 
-    # Пробелы в начале строки (артефакты после удаления тегов)
+    # Remove leading spaces on each line (artifact from removed tags).
     text = re.sub(r"^ +", "", text, flags=re.MULTILINE)
 
-    # Двойные пробелы внутри строки (не трогаем переносы)
+    # Collapse multiple spaces/tabs within a line.
     text = re.sub(r"[ \t]{2,}", " ", text)
 
     return text.strip()
 
 
-
-
 def truncate_text(text: str, limit: int) -> str:
-    """
-    Обрезает текст по границе слова и добавляет многоточие
-    """
+    """Trim text to at most `limit` characters, breaking at a word boundary."""
     if len(text) <= limit:
         return text
 
@@ -171,9 +167,7 @@ def format_genres(genres) -> str:
 
 
 def format_anime_post(anime) -> str:
-    """
-    Формирует финальный текст поста для Telegram
-    """
+    """Build the final Telegram post text for the given anime."""
 
     title = anime.title_ru or anime.title_en or "Без названия"
     year = anime.year or "—"
@@ -196,7 +190,6 @@ def format_anime_post(anime) -> str:
         f"📡 Статус: {status}\n"
         f"⭐️ Рейтинг: {rating}\n\n"
     )
-
 
     if genres_block:
         post += genres_block + "\n\n"

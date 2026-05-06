@@ -28,10 +28,10 @@ from services.auto_poster import auto_poster_loop
 
 logger = logging.getLogger(__name__)
 
-# Ссылка на фоновую задачу автопостинга (отмена при остановке Application).
+# Holds a reference to the auto-poster background task so it can be cancelled on shutdown.
 _auto_poster_task_holder: list[asyncio.Task | None] = [None]
 
-PAGE_SIZE = 5  # Аниме на одной странице при поиске по названию
+PAGE_SIZE = 5  # Anime entries shown per page in search results
 
 
 # ---------------------------------------------------------------------------
@@ -44,19 +44,20 @@ def _is_admin(update: Update) -> bool:
     user_id = user.id if user else None
     chat_id = chat.id if chat else None
     if ADMIN_IDS and (user_id not in ADMIN_IDS):
-        logger.warning("Доступ запрещён: user_id=%s не в ADMIN_IDS", user_id)
+        logger.warning("Access denied: user_id=%s not in ADMIN_IDS", user_id)
         return False
     if ALLOWED_CHAT_IDS and (chat_id not in ALLOWED_CHAT_IDS):
-        logger.warning("Доступ запрещён: chat_id=%s не в ALLOWED_CHAT_IDS", chat_id)
+        logger.warning("Access denied: chat_id=%s not in ALLOWED_CHAT_IDS", chat_id)
         return False
     return True
 
 
 def _build_search_keyboard(results: list, page: int, session_id: str) -> InlineKeyboardMarkup:
     """
-    Строит inline-клавиатуру для страницы результатов поиска.
+    Build an inline keyboard for one page of search results.
+
     results:    [(anime_id, title_ru, title_en, year, kind, shikimori_id), ...]
-    session_id: уникальный ключ сессии — вшивается в callback_data
+    session_id: unique session key embedded in every callback_data string
     """
     max_page = max(0, (len(results) - 1) // PAGE_SIZE)
     page = max(0, min(page, max_page))
@@ -75,7 +76,7 @@ def _build_search_keyboard(results: list, page: int, session_id: str) -> InlineK
         label = f"{title}{meta} • ID {shikimori_id}"
         buttons.append([InlineKeyboardButton(label, callback_data=f"pick:{anime_id}:{session_id}")])
 
-    # Индикатор страницы
+    # Page indicator button (non-interactive).
     buttons.append([InlineKeyboardButton(
         f"📄 Стр. {page + 1} / {max_page + 1}",
         callback_data=f"noop:{session_id}",
@@ -93,7 +94,7 @@ def _build_search_keyboard(results: list, page: int, session_id: str) -> InlineK
 
 
 def _publish_anime_by_db_id(anime_id: int, dry_run: bool) -> str:
-    """Общий хелпер: открывает сессию, ищет Anime по db-id, вызывает publish_anime."""
+    """Fetch anime by internal DB id and publish it. Returns a status string."""
     from db.database import SessionLocal
     from db.models import Anime
     from services.publisher import publish_anime
@@ -110,11 +111,11 @@ def _publish_anime_by_db_id(anime_id: int, dry_run: bool) -> str:
         session.close()
 
 
-_SEARCH_TTL = 15 * 60  # Сессии поиска живут 15 минут
+_SEARCH_TTL = 15 * 60  # Search sessions expire after 15 minutes
 
 
 def _cleanup_stale_searches(bot_data: dict) -> None:
-    """Удаляет устаревшие сессии поиска (старше _SEARCH_TTL секунд)."""
+    """Remove expired search sessions (older than _SEARCH_TTL seconds)."""
     searches = bot_data.get("anime_searches", {})
     now = time.time()
     stale = [k for k, v in searches.items() if now - v.get("created_at", 0) > _SEARCH_TTL]
@@ -128,38 +129,38 @@ def _cleanup_stale_searches(bot_data: dict) -> None:
 
 async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
 
     dry_run = settings.get_runtime_dry_run()
-    await update.effective_chat.send_message(f"Запускаю постинг (dry_run={dry_run})...")
+    await update.effective_chat.send_message(f"Starting post cycle (dry_run={dry_run})...")
     try:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, lambda: run_post_cycle(dry_run=dry_run))
 
         if isinstance(result, dict) and result.get("status") == "error":
             await update.effective_chat.send_message(
-                "Ошибка выбора аниме (см. logs/bot.log). Публикация пропущена."
+                "Anime selection failed (see logs/bot.log). Post skipped."
             )
             return
 
         if dry_run:
             title = result.get("title") if isinstance(result, dict) else None
-            lines = ["Старт публикации (dry_run=True)"]
+            lines = ["Post cycle started (dry_run=True)"]
             if title:
-                lines.append(f"Попытка публикации: {title}")
-            lines.append("DRY RUN: сообщение НЕ отправлено и НЕ записано в БД")
+                lines.append(f"Would publish: {title}")
+            lines.append("DRY RUN: message NOT sent, DB NOT updated")
             await update.effective_chat.send_message("\n".join(lines))
 
-        await update.effective_chat.send_message("Цикл публикации завершён.")
+        await update.effective_chat.send_message("Post cycle complete.")
     except Exception as e:
-        logger.exception("Ошибка при выполнении /post_now: %s", e)
-        await update.effective_chat.send_message("Ошибка при выполнении команды. Подробности в логах.")
+        logger.exception("Error in /post_now: %s", e)
+        await update.effective_chat.send_message("Command failed. Check logs for details.")
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
 
     dry_run = settings.get_runtime_dry_run()
@@ -167,7 +168,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     min_s, max_s = settings.get_post_interval()
     is_posting_now = settings.get_is_posting_now()
     text = (
-        "Бот работает.\n"
+        "Bot is running.\n"
         f"DRY_RUN: {'ON' if dry_run else 'OFF'}\n"
         f"AUTO posting: {'ON' if posting_enabled else 'OFF'}\n"
         f"Interval: {min_s}..{max_s} sec\n"
@@ -178,88 +179,88 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def dry_run_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
     settings.set_runtime_dry_run(True)
-    logger.info("DRY_RUN включён через Telegram")
+    logger.info("DRY_RUN enabled via Telegram")
     await update.effective_chat.send_message("DRY RUN: ON")
 
 
 async def dry_run_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
     settings.set_runtime_dry_run(False)
-    logger.info("DRY_RUN выключен через Telegram")
+    logger.info("DRY_RUN disabled via Telegram")
     await update.effective_chat.send_message("DRY RUN: OFF")
 
 
 async def posting_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
     settings.set_posting_enabled(True)
-    logger.info("AUTO posting включён через Telegram")
+    logger.info("AUTO posting enabled via Telegram")
     await update.effective_chat.send_message("AUTO posting: ON")
 
 
 async def posting_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
     settings.set_posting_enabled(False)
-    logger.info("AUTO posting выключен через Telegram")
+    logger.info("AUTO posting disabled via Telegram")
     await update.effective_chat.send_message("AUTO posting: OFF")
 
 
 async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
     try:
         if not context.args or len(context.args) != 2:
-            await update.effective_chat.send_message("Использование: /interval <min_sec> <max_sec>")
+            await update.effective_chat.send_message("Usage: /interval <min_sec> <max_sec>")
             return
         min_s = int(context.args[0])
         max_s = int(context.args[1])
         settings.set_post_interval(min_s, max_s)
-        logger.info("Interval изменён через Telegram: %s..%s", min_s, max_s)
+        logger.info("Interval changed via Telegram: %s..%s", min_s, max_s)
         await update.effective_chat.send_message(f"Interval set: {min_s}..{max_s} sec")
     except Exception:
-        logger.exception("Ошибка при установке интервала")
-        await update.effective_chat.send_message("Ошибка: не удалось установить интервал.")
+        logger.exception("Error setting interval")
+        await update.effective_chat.send_message("Error: could not set interval.")
 
 
 async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    /post_anime <shikimori_id|название>
+    /post_anime <shikimori_id|title>
 
-    По числу — прямой поиск по shikimori_id, публикация без кнопок.
-    По тексту — AND-поиск по словам в title_ru/title_en:
-      0 результатов → сообщение "Ничего не найдено"
-      1 результат   → сразу publish_anime
-      >1 результата → inline-кнопки с пагинацией
+    Numeric input: direct lookup by shikimori_id, publishes immediately.
+    Text input: AND-search across title_ru / title_en:
+      0 results  → "Nothing found" message
+      1 result   → publish immediately
+      >1 results → inline keyboard with pagination
     """
     if not _is_admin(update):
-        await update.effective_chat.send_message("Нет доступа.")
+        await update.effective_chat.send_message("Access denied.")
         return
 
     if not context.args:
         await update.effective_chat.send_message(
-            "Использование:\n"
-            "  /post_anime 5114        — по shikimori_id\n"
-            "  /post_anime Наруто     — по названию (title_ru / title_en)"
+            "Usage:\n"
+            "  /post_anime 5114       — by shikimori_id\n"
+            "  /post_anime Naruto     — by title (title_ru / title_en)"
         )
         return
 
     query = " ".join(context.args).strip()
     if len(query) > 100:
-        await update.effective_chat.send_message("Слишком длинный запрос. Максимум 100 символов.")
+        await update.effective_chat.send_message("Query too long. Maximum 100 characters.")
         return
     dry_run = settings.get_runtime_dry_run()
     loop = asyncio.get_running_loop()
 
-    # ── По shikimori_id ───────────────────────────────────────────────────────
+    # ── Lookup by shikimori_id ────────────────────────────────────────────────
     if query.lstrip("-").isdigit():
         def _find_by_id() -> str:
             from db.database import SessionLocal
@@ -270,21 +271,21 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     Anime.shikimori_id == int(query)
                 ).first()
                 if not row:
-                    return f"Аниме не найдено: shikimori_id={query}"
+                    return f"Anime not found: shikimori_id={query}"
                 return _publish_anime_by_db_id(row.id, dry_run)
             finally:
                 session.close()
 
-        await update.effective_chat.send_message(f"Ищу shikimori_id={query}...")
+        await update.effective_chat.send_message(f"Looking up shikimori_id={query}...")
         try:
             result = await loop.run_in_executor(None, _find_by_id)
             await update.effective_chat.send_message(result)
         except Exception as e:
-            logger.exception("Ошибка /post_anime по id: %s", e)
-            await update.effective_chat.send_message("Ошибка при публикации. Подробности в логах.")
+            logger.exception("Error in /post_anime by id: %s", e)
+            await update.effective_chat.send_message("Publish failed. Check logs for details.")
         return
 
-    # ── По названию: AND-поиск ────────────────────────────────────────────────
+    # ── AND-search by title ───────────────────────────────────────────────────
     def _search_by_title() -> list:
         from db.database import SessionLocal
         from db.models import Anime
@@ -308,7 +309,7 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             session.close()
 
     def _search_fuzzy() -> list:
-        """Fuzzy-поиск через rapidfuzz. Топ-3000 по popularity, нормализованные строки."""
+        """Fuzzy search via rapidfuzz. Searches top-3000 by popularity with normalised strings."""
         from rapidfuzz import fuzz, process
         from db.database import SessionLocal
         from db.models import Anime
@@ -331,7 +332,7 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 query.lower().strip(), keys,
                 scorer=fuzz.WRatio, limit=50, score_cutoff=65,
             )
-            # m[2] — индекс в data (без потери при дублях названий)
+            # m[2] is the index into data (stable even when multiple titles share the same string)
             return [data[m[2]] for m in matches]
         finally:
             session.close()
@@ -340,27 +341,27 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         results = await loop.run_in_executor(None, _search_by_title)
     except Exception as e:
-        logger.exception("Ошибка при поиске аниме: %s", e)
-        await update.effective_chat.send_message("Ошибка при поиске. Подробности в логах.")
+        logger.exception("Error searching anime: %s", e)
+        await update.effective_chat.send_message("Search failed. Check logs for details.")
         return
 
-    # Fuzzy fallback: если AND-поиск не дал результатов
-    # Запускаем только если хотя бы одно слово запроса длиннее 2 символов
+    # Fuzzy fallback: only triggered when AND-search returns nothing
+    # and at least one query word is longer than 2 characters.
     fuzzy_used = False
     if not results and any(len(w) >= 3 for w in query.strip().split()):
         try:
             results = await loop.run_in_executor(None, _search_fuzzy)
             if results:
                 fuzzy_used = True
-                logger.info("Fuzzy-поиск по %r: найдено %d результатов", query, len(results))
+                logger.info("Fuzzy search for %r: found %d results", query, len(results))
         except Exception as e:
-            logger.exception("Ошибка fuzzy-поиска: %s", e)
+            logger.exception("Error in fuzzy search: %s", e)
 
     if not results:
-        await update.effective_chat.send_message(f"Ничего не найдено по запросу: {query!r}")
+        await update.effective_chat.send_message(f"Nothing found for: {query!r}")
         return
 
-    # 1 результат — публикуем сразу без кнопок
+    # Single result — publish immediately without showing buttons.
     if len(results) == 1:
         try:
             result = await loop.run_in_executor(
@@ -368,17 +369,17 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             )
             await update.effective_chat.send_message(result)
         except Exception as e:
-            logger.exception("Ошибка при публикации единственного результата: %s", e)
-            await update.effective_chat.send_message("Ошибка при публикации. Подробности в логах.")
+            logger.exception("Error publishing single result: %s", e)
+            await update.effective_chat.send_message("Publish failed. Check logs for details.")
         return
 
-    # >1 результата — генерируем session_id, строим клавиатуру, отправляем в один вызов
+    # Multiple results — generate a session_id and send the keyboard in one message.
     total = len(results)
-    suffix = " (показаны первые 50)" if total == 50 else ""
+    suffix = " (first 50 shown)" if total == 50 else ""
     header = (
-        f"🔎 Fuzzy-поиск по {query!r}: {total}{suffix}"
+        f"🔎 Fuzzy search for {query!r}: {total}{suffix}"
         if fuzzy_used else
-        f"🔍 Найдено: {total}{suffix}"
+        f"🔍 Found: {total}{suffix}"
     )
     session_id = f"{int(time.time())}{random.randint(1000, 9999)}"
     _cleanup_stale_searches(context.bot_data)
@@ -390,33 +391,33 @@ async def post_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     }
     keyboard = _build_search_keyboard(results, 0, session_id)
     sent = await update.effective_chat.send_message(
-        f"{header}. Выберите аниме:",
+        f"{header}. Choose an anime:",
         reply_markup=keyboard,
     )
     context.bot_data["anime_searches"][session_id]["message_id"] = sent.message_id
 
 
 # ---------------------------------------------------------------------------
-# Callback handlers (inline-кнопки для /post_anime)
+# Callback handlers (inline buttons for /post_anime)
 # ---------------------------------------------------------------------------
 
 async def _cb_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Выбор аниме → публикация → отправить результат → удалить кнопки."""
+    """User picks an anime → publish → send result → delete the keyboard message."""
     query = update.callback_query
     if not _is_admin(update):
-        await query.answer("Нет доступа.", show_alert=True)
+        await query.answer("Access denied.", show_alert=True)
         return
     if not query.message:
         await query.answer()
         return
     try:
-        parts      = query.data.split(":")           # pick:{anime_id}:{session_id}
+        parts      = query.data.split(":")  # pick:{anime_id}:{session_id}
         anime_id   = int(parts[1])
         session_id = parts[2]
     except (IndexError, ValueError):
-        await query.answer("Некорректные данные кнопки", show_alert=True)
+        await query.answer("Invalid button data", show_alert=True)
         return
-    await query.answer()  # единственный вызов в пути успеха
+    await query.answer()  # must be called exactly once on the success path
     _cleanup_stale_searches(context.bot_data)
     search_data = context.bot_data.get("anime_searches", {}).get(session_id)
     if search_data and search_data.get("message_id") != query.message.message_id:
@@ -429,18 +430,18 @@ async def _cb_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             None, lambda: _publish_anime_by_db_id(anime_id, dry_run)
         )
     except Exception as e:
-        logger.exception("Ошибка при публикации через кнопку pick: %s", e)
-        result_text = "Ошибка при публикации. Подробности в логах."
+        logger.exception("Error publishing via pick button: %s", e)
+        result_text = "Publish failed. Check logs for details."
     context.bot_data.get("anime_searches", {}).pop(session_id, None)
-    await context.bot.send_message(chat_id, result_text)   # сначала результат
+    await context.bot.send_message(chat_id, result_text)  # send result first
     try:
-        await query.message.delete()                        # потом удаляем кнопки
+        await query.message.delete()                       # then remove the keyboard
     except Exception:
         pass
 
 
 async def _cb_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Перелистывание — обновляет клавиатуру без новых сообщений."""
+    """Pagination — updates the keyboard in-place without sending a new message."""
     query = update.callback_query
     await query.answer()
     if not _is_admin(update):
@@ -448,11 +449,11 @@ async def _cb_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not query.message:
         return
     try:
-        parts      = query.data.split(":")           # page:{page}:{session_id}
+        parts      = query.data.split(":")  # page:{page}:{session_id}
         page       = int(parts[1])
         session_id = parts[2]
     except (IndexError, ValueError):
-        await query.answer("Некорректные данные кнопки", show_alert=True)
+        await query.answer("Invalid button data", show_alert=True)
         return
     _cleanup_stale_searches(context.bot_data)
     search_data = context.bot_data.get("anime_searches", {}).get(session_id)
@@ -472,17 +473,17 @@ async def _cb_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await query.edit_message_reply_markup(reply_markup=keyboard)
     except BadRequest:
-        pass  # Message is not modified — нормально
+        pass  # "Message is not modified" — harmless, ignore
 
 
 async def _cb_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отмена — удаляет сообщение с кнопками, ничего не отправляет."""
+    """Cancel — deletes the keyboard message, sends nothing."""
     query = update.callback_query
     await query.answer()
     if not query.message:
         return
     try:
-        parts      = query.data.split(":")           # cancel:{session_id}
+        parts      = query.data.split(":")  # cancel:{session_id}
         session_id = parts[1]
     except IndexError:
         return
@@ -498,7 +499,7 @@ async def _cb_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def _cb_noop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Кнопка без действия (индикатор страницы)."""
+    """No-op button (page indicator label)."""
     await update.callback_query.answer()
 
 
@@ -510,14 +511,14 @@ def main() -> None:
     setup_logging()
 
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN не задан в окружении или settings")
+        logger.error("BOT_TOKEN is not set in environment or settings")
         sys.exit(1)
 
     if not ADMIN_IDS:
         logger.warning(
-            "⚠️  ADMIN_IDS не задан — все пользователи Telegram имеют доступ "
-            "к командам управления ботом (/post_now, /posting_on и др.). "
-            "Задайте ADMIN_IDS в .env для ограничения доступа."
+            "⚠️  ADMIN_IDS is not set — ALL Telegram users have access to bot "
+            "management commands (/post_now, /posting_on, etc.). "
+            "Set ADMIN_IDS in .env to restrict access."
         )
 
     try:
@@ -545,7 +546,7 @@ def main() -> None:
                     return
                 if isinstance(err, NetworkError):
                     logger.warning(
-                        "Telegram: сеть/тайм-аут, будет повтор (get_updates): %s",
+                        "Telegram: network/timeout error, will retry (get_updates): %s",
                         err,
                     )
                     return
@@ -565,7 +566,7 @@ def main() -> None:
 
             application.add_error_handler(_on_error)
 
-            # Команды
+            # Command handlers
             application.add_handler(CommandHandler("post_now", post_now))
             application.add_handler(CommandHandler("post_anime", post_anime))
             application.add_handler(CommandHandler("status", status))
@@ -575,7 +576,7 @@ def main() -> None:
             application.add_handler(CommandHandler("posting_off", posting_off))
             application.add_handler(CommandHandler("interval", set_interval))
 
-            # Callback-кнопки для /post_anime
+            # Callback handlers for /post_anime inline buttons
             application.add_handler(CallbackQueryHandler(_cb_pick,   pattern=r"^pick:\d+:[\w\-]+$"))
             application.add_handler(CallbackQueryHandler(_cb_page,   pattern=r"^page:\d+:[\w\-]+$"))
             application.add_handler(CallbackQueryHandler(_cb_cancel, pattern=r"^cancel:[\w\-]+$"))
@@ -587,7 +588,7 @@ def main() -> None:
         logger.warning("Telegram bot already running (lock=%s)", lock_path)
         return
     except Exception:
-        logger.exception("Критическая ошибка Telegram-бота")
+        logger.exception("Fatal error in Telegram bot")
         sys.exit(1)
 
 

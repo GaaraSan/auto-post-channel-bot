@@ -1,8 +1,8 @@
 """
-Общие фикстуры для тестов.
+Shared fixtures for tests.
 
-StaticPool гарантирует, что все сессии используют одно соединение
-→ данные, записанные в db_session, видны из session_factory().
+StaticPool ensures all sessions share the same underlying connection,
+so data written in db_session is visible to session_factory() calls.
 """
 import pytest
 from sqlalchemy import create_engine
@@ -27,7 +27,7 @@ def in_memory_engine():
 
 @pytest.fixture(scope="function")
 def session_factory(in_memory_engine):
-    """Фабрика сессий, привязанная к in-memory БД."""
+    """Session factory bound to the in-memory database."""
     return sessionmaker(bind=in_memory_engine, autoflush=False, autocommit=False)
 
 
@@ -40,7 +40,7 @@ def db_session(session_factory):
 
 @pytest.fixture(scope="function")
 def sample_anime(db_session):
-    """Минимально валидное аниме, проходящее все качественные фильтры."""
+    """Minimally valid anime that passes all quality filters."""
     genre = Genre(id=1, name="Action")
     anime = Anime(
         shikimori_id=1001,

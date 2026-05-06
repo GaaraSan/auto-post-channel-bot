@@ -1,7 +1,6 @@
 """
 Service layer package.
 
-Содержит сервисные функции, которые переиспользуются скриптами и будущим
-управлением через Telegram-команды, без дублирования бизнес-логики.
+Contains reusable business-logic functions shared between CLI scripts
+and Telegram command handlers, avoiding duplication.
 """
-

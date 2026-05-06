@@ -3,16 +3,19 @@ import threading
 
 from dotenv import load_dotenv  # type: ignore[reportMissingImports]
 
-# На случай импорта runtime_state до app.settings — чтобы INTERVAL/DRY_RUN из .env подхватились.
+# Load .env before STATE is first accessed so env vars are available immediately.
 load_dotenv()
 
 
 class RuntimeState:
     """
-    Runtime-состояние процесса:
-    - dry-run (переключаемый в runtime)
-    - автопостинг (enabled) + интервалы
-    - флаг "идёт публикация" (для /status)
+    In-process mutable configuration, adjustable without a restart.
+
+    Stores: dry-run flag, auto-posting enabled flag, posting interval,
+    and a "posting in progress" flag used by /status.
+
+    All getters/setters are protected by a threading.Lock so they are
+    safe to call from both the asyncio event loop and executor threads.
     """
 
     def __init__(self) -> None:
@@ -21,9 +24,9 @@ class RuntimeState:
         self._dry_run = os.getenv("DRY_RUN", "false").lower() in {"1", "true", "yes"}
         self._posting_enabled = os.getenv("POSTING_ENABLED", "false").lower() in {"1", "true", "yes"}
 
-        # значения в секундах
-        self._interval_min = int(os.getenv("POST_INTERVAL_MIN", "18000"))  # 5 часов
-        self._interval_max = int(os.getenv("POST_INTERVAL_MAX", "28800"))  # 8 часов
+        # Interval bounds in seconds (defaults: 5 h – 8 h).
+        self._interval_min = int(os.getenv("POST_INTERVAL_MIN", "18000"))
+        self._interval_max = int(os.getenv("POST_INTERVAL_MAX", "28800"))
 
         self._is_posting_now = False
 
@@ -66,4 +69,3 @@ class RuntimeState:
 
 
 STATE = RuntimeState()
-

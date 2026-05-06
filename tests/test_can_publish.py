@@ -1,6 +1,6 @@
 """
-Тесты can_publish — логика cooldown и повторной публикации.
-Расширяет существующие 3 кейса ещё тремя новыми.
+Tests for can_publish — cooldown and re-publication logic.
+Extends the original 3 cases with 3 additional edge cases.
 """
 from datetime import UTC, datetime, timedelta
 
@@ -20,7 +20,7 @@ class DummyPub:
         self.published_at = published_at
 
 
-# ── Существующие кейсы (не трогаем) ─────────────────────────────────────────
+# ── Original cases ────────────────────────────────────────────────────────────
 
 def test_can_publish_released_cooldown():
     anime = DummyAnime(status="released")
@@ -45,39 +45,39 @@ def test_can_publish_never_published():
     assert can_publish(anime, None) is True
 
 
-# ── Новые кейсы ───────────────────────────────────────────────────────────────
+# ── Edge cases ────────────────────────────────────────────────────────────────
 
 def test_can_publish_naive_datetime():
-    """SQLite часто возвращает naive datetime — не должен падать с TypeError."""
-    # naive datetime без tzinfo (без UTC)
+    """SQLite often returns naive datetimes — must not raise TypeError."""
+    # naive datetime with no tzinfo
     naive_dt = datetime.utcnow() - timedelta(days=200)
     anime    = DummyAnime(status="released")
     last_pub = DummyPub("released", None, naive_dt)
 
-    # 200 дней >> 90-дневный cooldown → True, и без TypeError
+    # 200 days >> 90-day cooldown → True, and no TypeError
     assert can_publish(anime, last_pub) is True
 
 
 def test_can_publish_ongoing_min_cooldown_not_passed():
     """
-    ongoing + новые серии, но минимальный cooldown (ONGOING_MIN_COOLDOWN_DAYS=2)
-    ещё не прошёл → False.
+    Ongoing anime with new episodes, but ONGOING_MIN_COOLDOWN_DAYS=2
+    has not yet elapsed → False.
     """
     now      = datetime.now(UTC)
     anime    = DummyAnime(status="ongoing", episodes_aired=12)
     last_pub = DummyPub("ongoing", episodes=10, published_at=now - timedelta(days=1))
 
-    # 1 день < 2 дня минимального cooldown → нельзя публиковать
+    # 1 day < 2-day minimum cooldown → cannot publish
     assert can_publish(anime, last_pub) is False
 
 
 def test_can_publish_unknown_status_uses_60_day_default():
-    """Статус не из COOLDOWN_DAYS → дефолтный cooldown 60 дней."""
+    """Status not in COOLDOWN_DAYS → defaults to 60-day cooldown."""
     now = datetime.now(UTC)
-    anime = DummyAnime(status="paused")  # нет в COOLDOWN_DAYS
+    anime = DummyAnime(status="paused")  # not in COOLDOWN_DAYS
 
     last_pub_50 = DummyPub("paused", None, now - timedelta(days=50))
     last_pub_70 = DummyPub("paused", None, now - timedelta(days=70))
 
-    assert can_publish(anime, last_pub_50) is False  # 50 < 60 → нельзя
-    assert can_publish(anime, last_pub_70) is True   # 70 > 60 → можно
+    assert can_publish(anime, last_pub_50) is False  # 50 < 60 → blocked
+    assert can_publish(anime, last_pub_70) is True   # 70 > 60 → allowed
