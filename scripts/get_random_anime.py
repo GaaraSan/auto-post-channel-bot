@@ -43,8 +43,11 @@ MIN_MEMBERS    = 500                     # ignore obscure titles with tiny audie
 MIN_RATING     = 3.0                     # filter out obviously bad entries
 MIN_DESC_LEN   = 120                     # skip entries with too little description text
 
-# Primary pool: top N by popularity — consistently good quality.
-POOL_TOP    = 300
+# Primary pool: fetch top N by popularity, then randomly sample a subset.
+# Fetching more than we keep adds variety — different runs pick different 300
+# from the same top-500, so the pool isn't identical every time.
+POOL_TOP_FETCH  = 500   # how many top-by-members titles to pull from DB
+POOL_TOP_SAMPLE = 300   # how many to keep after random.sample
 # Secondary pool: random N — gives newer / less popular titles a chance.
 POOL_RANDOM = 200
 # Final candidate list size before random.choice.
@@ -141,12 +144,17 @@ def get_random_anime():
         eligible = []
         for multiplier in (1, 2):
             # Pool A: top by popularity — reliable quality baseline.
-            top_candidates = (
+            # Fetch POOL_TOP_FETCH titles, then randomly sample POOL_TOP_SAMPLE
+            # from them. This keeps quality high (only top-500 enter) while
+            # ensuring a different subset is chosen on every run.
+            top_fetched = (
                 _base_query()
                 .order_by(Anime.members.desc(), Anime.rating.desc())
-                .limit(POOL_TOP * multiplier)
+                .limit(POOL_TOP_FETCH * multiplier)
                 .all()
             )
+            sample_size = min(POOL_TOP_SAMPLE * multiplier, len(top_fetched))
+            top_candidates = random.sample(top_fetched, sample_size) if top_fetched else []
 
             # Pool B: random sample — chance for newer / less popular titles.
             random_candidates = (
