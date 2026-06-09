@@ -89,9 +89,9 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
 
     # ── Scenario B: download and send ─────────────────────────────────────────
     if not image_url:
-        logger.warning("image_url is missing — sending text only")
-        await bot.send_message(chat_id=CHANNEL_USERNAME, text=text)
-        return
+        # No poster URL in DB at all — skip rather than post without image.
+        logger.warning("image_url is missing for anime id=%s — skipping post", getattr(anime, "id", "?"))
+        raise RuntimeError(f"No image_url for anime id={getattr(anime, 'id', '?')} — post skipped")
 
     # Download via httpx (async — does not block the event loop), up to 2 attempts.
     img_bytes: bytes | None = None
@@ -113,7 +113,15 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
                 "Image too large (%d bytes > 10 MB) — falling back to URL",
                 len(img_bytes),
             )
-            await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_url, caption=text)
+            try:
+                await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_url, caption=text)
+            except BadRequest as e:
+                # Telegram couldn't fetch the URL from Shikimori either.
+                # Re-raise so the publish cycle rolls back and skips this anime.
+                logger.warning(
+                    "URL fallback also failed (Telegram can't fetch image): %s", e
+                )
+                raise
             return
 
         # Send raw bytes — no temp file needed.
@@ -135,7 +143,15 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
         logger.warning(
             "Could not download image — falling back to URL: %s", image_url
         )
-        await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_url, caption=text)
+        try:
+            await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=image_url, caption=text)
+        except BadRequest as e:
+            # Telegram couldn't fetch the URL from Shikimori either.
+            # Re-raise so the publish cycle rolls back and skips this anime.
+            logger.warning(
+                "URL fallback also failed (Telegram can't fetch image): %s", e
+            )
+            raise
 
 
 def send_post_with_cache(text: str, anime, session) -> None:
