@@ -94,10 +94,11 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
         raise RuntimeError(f"No image_url for anime id={getattr(anime, 'id', '?')} — post skipped")
 
     # Download via httpx (async — does not block the event loop), up to 2 attempts.
+    # follow_redirects=True handles Shikimori's 301 .one → .io domain migration.
     img_bytes: bytes | None = None
     for attempt in range(1, 3):
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 resp = await client.get(image_url)
                 resp.raise_for_status()
                 img_bytes = resp.content
@@ -105,6 +106,7 @@ async def send_post_with_cache_async(text: str, anime, session) -> None:
             break
         except Exception as e:
             logger.warning("Attempt %d to download image failed: %s", attempt, e)
+
 
     if img_bytes:
         if len(img_bytes) > MAX_PHOTO_BYTES:
